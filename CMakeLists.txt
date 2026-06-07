@@ -17,7 +17,7 @@ add_library(common STATIC
     src/common.cpp
 )
 target_include_directories(common PUBLIC include)
-target_link_libraries(common PUBLIC wevtapi winhttp)
+target_link_libraries(common PUBLIC wevtapi winhttp crypt32)
 
 # ============================================================
 # 事件通知程序 (ID41, ID1074, ID6005, ID6006, ID6008)

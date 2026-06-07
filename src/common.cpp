@@ -19,6 +19,7 @@
 #pragma comment(lib, "wevtapi.lib")
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "bcrypt.lib")
+#pragma comment(lib, "crypt32.lib")
 
 
 // 硬编码参数
