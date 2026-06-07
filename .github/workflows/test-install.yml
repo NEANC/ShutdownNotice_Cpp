@@ -34,14 +34,28 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: 显示 PowerShell 版本
-        shell: ${{ matrix.pwsh_exe }}
+      - name: 显示 PowerShell 版本 (${{ matrix.pwsh_label }})
+        if: matrix.pwsh_exe == 'powershell'
+        shell: powershell
         run: $PSVersionTable | Format-Table -AutoSize
 
-      - name: 运行测试
-        shell: ${{ matrix.pwsh_exe }}
+      - name: 显示 PowerShell 版本 (${{ matrix.pwsh_label }})
+        if: matrix.pwsh_exe == 'pwsh'
+        shell: pwsh
+        run: $PSVersionTable | Format-Table -AutoSize
+
+      - name: 运行测试 (PowerShell ${{ matrix.pwsh_label }})
+        if: matrix.pwsh_exe == 'powershell'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$env:GITHUB_WORKSPACE\tests\test-install.ps1"
+
+      - name: 运行测试 (PowerShell ${{ matrix.pwsh_label }})
+        if: matrix.pwsh_exe == 'pwsh'
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           & "$env:GITHUB_WORKSPACE\tests\test-install.ps1"
