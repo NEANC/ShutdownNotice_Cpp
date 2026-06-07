@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     install.ps1 单元测试 — 兼容 PowerShell 5.1 和 7
 .DESCRIPTION
