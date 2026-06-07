@@ -1,0 +1,171 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+    tags:
+      - 'v*'
+    paths:
+      - '**.cpp'
+  pull_request:
+    branches: [master]
+    paths:
+      - '**.cpp'
+  workflow_dispatch:
+
+jobs:
+  meta:
+    name: Gather Meta Information
+    runs-on: ubuntu-latest
+    outputs:
+      ref_name: ${{ github.ref_name }}
+      tag: ${{ steps.set_tag.outputs.tag }}
+      prerelease: ${{ steps.set_pre.outputs.prerelease }}
+    steps:
+      # 检查代码库
+      - name: Check-out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # 确保能获取所有标签
+
+      # 设置版本标签
+      - name: Set tag
+        id: set_tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            tag="${{ github.ref_name }}"
+          else
+            tag=$(git describe --tags --match "v*" HEAD 2>/dev/null | sed 's/-g/-build./' || echo "v0.0.1-build.$(git rev-parse --short HEAD)")
+          fi
+          echo "tag=${tag}" | tee -a $GITHUB_OUTPUT
+
+      # 检查是否为预发布版本
+      - name: Check if it is a pre-release
+        id: set_pre
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [[ '${{ steps.set_tag.outputs.tag }}' =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" | tee -a $GITHUB_OUTPUT
+          else
+            echo "prerelease=true" | tee -a $GITHUB_OUTPUT
+          fi
+
+      # 自动生成变更日志
+      - name: Generate Changelog
+        id: generate_changelog
+        run: |
+          echo "=== Generating Changelog ==="
+          current_tag="${{ steps.set_tag.outputs.tag }}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # 查找基准版本
+            if [[ "${{ steps.set_pre.outputs.prerelease }}" == "false" ]]; then
+              # 正式版：回追到上一个稳定版 (vX.Y.Z)，包含所有 pre-release 的变更
+              previous_base=$(git tag --sort=-creatordate | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${current_tag}$" | head -1 || echo "")
+            fi
+            if [[ -z "${previous_base:-}" ]]; then
+              # pre-release 或找不到稳定版：增量（距上一个任意 tag）
+              previous_base=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            fi
+            if [[ -n "$previous_base" ]]; then
+              echo "Generating changelog from $previous_base to $current_tag"
+              # 获取完整的提交列表
+              git log --oneline "$previous_base..HEAD" | grep -v "Merge pull request" > full_commits.txt
+              total_commits=$(wc -l < full_commits.txt)
+              # 正式版取前15个，pre-release 取前8个
+              if [[ "${{ steps.set_pre.outputs.prerelease }}" == "false" ]]; then
+                head -15 full_commits.txt > CHANGELOG.md
+                # 正式版无论数量都放置 Full Changelog 链接
+                echo "" >> CHANGELOG.md
+                echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_base...$current_tag" >> CHANGELOG.md
+              else
+                head -8 full_commits.txt > CHANGELOG.md
+                if [[ $total_commits -gt 8 ]]; then
+                  echo "" >> CHANGELOG.md
+                  echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_base...$current_tag" >> CHANGELOG.md
+                fi
+              fi
+            else
+              echo "First release, no previous tag found"
+              # 首次发布，只取前8个提交
+              git log --oneline | grep -v "Merge pull request" | head -8 > CHANGELOG.md
+            fi
+            # Add header
+            echo "## What's Changed" > temp_changelog.md
+            echo "" >> temp_changelog.md
+            cat CHANGELOG.md >> temp_changelog.md
+            mv temp_changelog.md CHANGELOG.md
+          else
+            echo "Skipping changelog for development build"
+          fi
+
+      # 上传变更日志
+      - name: Upload Changelog
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v7
+        with:
+          name: changelog
+          path: CHANGELOG.md
+          retention-days: 1
+
+  build:
+    name: Build (Windows MSVC)
+    runs-on: windows-latest
+    needs: [meta]
+    steps:
+      - name: Check-out repository
+        uses: actions/checkout@v6
+
+      - name: 配置 CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: 构建
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ShutdownNotice
+          path: |
+            build/Release/*.exe
+          if-no-files-found: error
+
+      - name: 显示产物信息
+        run: |
+          Get-ChildItem build/Release/*.exe | ForEach-Object {
+            Write-Host "$($_.Name): $('{0:N0}' -f $_.Length) bytes"
+          }
+
+  release:
+    name: Publish Release
+    needs: [build, meta]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      # 下载所有构建产物
+      - name: Download artifacts from GitHub
+        uses: actions/download-artifact@v7
+        with:
+          path: assets
+
+      # 整理文件
+      - name: Organize files
+        shell: bash
+        run: |
+          mkdir -p release
+          cp -f "assets/ShutdownNotice/"*.exe "release/" 2>/dev/null || true
+          if [ -f "assets/changelog/CHANGELOG.md" ]; then
+            cp -f "assets/changelog/CHANGELOG.md" "release/CHANGELOG.md"
+          fi
+          rm -rf assets
+
+      # 发布 Release
+      - name: Publish release to GitHub
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: ${{ needs.meta.outputs.tag }}
+          body_path: release/CHANGELOG.md
+          files: |
+            release/*.exe
+            release/CHANGELOG.md
+          prerelease: ${{ needs.meta.outputs.prerelease != 'false' }}
