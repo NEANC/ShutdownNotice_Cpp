@@ -119,7 +119,7 @@ static constexpr const char* CONFIG_TEMPLATE =
     "# 通知策略: primary_only (仅主通道) / failover (主通道失败后备用) / both_sequential (串行双通道)\n"
     "mode = failover\n"
     "# 主通道: dingtalk / serverchan\n"
-    "primary = dingtalk\n";
+    "primary = dingtalk\n"
     "\n"
     "[serverchan]\n"
     "# ServerChan 推送密钥\n"
