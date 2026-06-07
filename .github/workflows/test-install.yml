@@ -3,18 +3,14 @@ name: 测试 install.ps1
 on:
   workflow_dispatch:
   push:
-    branches: [master]
-    paths:
-      - 'install.ps1'
-      - 'src/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/test-install-ci.yml'
+    tags:
+      - 'v*'
   pull_request:
     paths:
       - 'install.ps1'
       - 'src/**'
       - 'CMakeLists.txt'
-      - '.github/workflows/test-install-ci.yml'
+      - '.github/workflows/test-install.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

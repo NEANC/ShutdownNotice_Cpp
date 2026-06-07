@@ -4,16 +4,12 @@ on:
   push:
     tags:
       - 'v*'
-    paths:
-      - 'install.ps1'
-      - 'tests/test-install.ps1'
-      - '.github/workflows/test-install.yml'
   pull_request:
     branches: [master]
     paths:
       - 'install.ps1'
       - 'tests/test-install.ps1'
-      - '.github/workflows/test-install.yml'
+      - '.github/workflows/Sandbox-test.yml'
   workflow_dispatch:
 
 jobs:
