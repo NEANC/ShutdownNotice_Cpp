@@ -62,6 +62,10 @@ private:
 
 /** 诊断版本等待用户按键。使用 WriteConsoleW 避免中文乱码 */
 void debug_wait_if_enabled() {
+    // 首次调用时设置控制台 UTF-8 代码页，确保 printf 中文正常显示
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+
     const wchar_t msg[] = L"\n[诊断] 按 Enter 键退出...";
     DWORD written = 0;
     WriteConsoleW(GetStdHandle(STD_ERROR_HANDLE), msg,

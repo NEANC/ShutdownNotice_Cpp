@@ -10,6 +10,10 @@
  * 获取当前计算机名和时间，通过已配置的通知渠道推送关机告知
  */
 int main() {
+#ifdef SN_DEBUG_TIMING
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
     try {
         // 获取计算机名
         wchar_t computer_name[MAX_COMPUTERNAME_LENGTH + 1] = {};
