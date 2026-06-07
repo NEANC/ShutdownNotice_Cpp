@@ -2,49 +2,20 @@ name: 测试 install.ps1
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
-  pull_request:
-    paths:
-      - 'install.ps1'
-      - 'src/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/test-install.yml'
+  workflow_run:
+    workflows: [Build]
+    types:
+      - completed
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # 构建 exe（一次性产物，供后续安装测试使用）
-  build:
-    name: 构建 exe
-    runs-on: windows-latest
-    outputs:
-      artifact_name: ${{ steps.upload.outputs.artifact_name || 'ShutdownNotice-CI' }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 配置 CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-      - name: 构建（全部 target，含 _dbg）
-        run: cmake --build build --config Release --parallel
-
-      - name: 上传构建产物
-        id: upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: ShutdownNotice-CI
-          path: build/Release/*.exe
-          if-no-files-found: error
-
-  # 安装测试矩阵（PS 5.1 + PS 7）
   test-install:
     name: PS ${{ matrix.pwsh_label }}
-    needs: build
     runs-on: windows-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -61,12 +32,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1. 下载构建产物
-      - name: 下载构建产物
-        uses: actions/download-artifact@v4
+      # 1. 下载 build.yml 的构建产物
+      - name: 下载构建产物（来自 Build workflow）
+        uses: dawidd6/action-download-artifact@v9
         with:
-          name: ShutdownNotice-CI
+          workflow: build.yml
+          workflow_conclusion: success
+          name: ShutdownNotice
           path: ci-install
+          check_artifacts: true
+          search_artifacts: true
 
       - name: 确认产物
         run: |
