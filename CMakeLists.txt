@@ -22,7 +22,7 @@ add_library(common STATIC
     src/common.cpp
 )
 target_include_directories(common PUBLIC include)
-target_link_libraries(common PUBLIC wevtapi winhttp crypt32)
+target_link_libraries(common PUBLIC wevtapi winhttp crypt32 bcrypt)
 target_compile_definitions(common PUBLIC ${COMMON_DEFS})
 
 # ============================================================
@@ -32,7 +32,7 @@ add_library(common_dbg STATIC
     src/common.cpp
 )
 target_include_directories(common_dbg PUBLIC include)
-target_link_libraries(common_dbg PUBLIC wevtapi winhttp crypt32)
+target_link_libraries(common_dbg PUBLIC wevtapi winhttp crypt32 bcrypt)
 target_compile_definitions(common_dbg PUBLIC ${COMMON_DEFS})
 target_compile_definitions(common_dbg PRIVATE SN_DEBUG_TIMING)
 

@@ -78,7 +78,7 @@ struct ConfigCache {
     std::string dingtalk_webhook;
     std::string dingtalk_secret;
     // [notify]
-    std::string notify_mode = "both_sequential";  ///< primary_only | failover | both_sequential
+    std::string notify_mode = "failover";            ///< primary_only | failover | both_sequential
     std::string notify_primary = "dingtalk";       ///< dingtalk | serverchan
     // [http]
     std::string http_proxy = "default";            ///< none | default
@@ -119,7 +119,7 @@ static constexpr const char* CONFIG_TEMPLATE =
     "\n"
     "[notify]\n"
     "# 通知策略: primary_only (仅主通道) / failover (主通道失败后备用) / both_sequential (串行双通道)\n"
-    "mode = both_sequential\n"
+    "mode = failover\n"
     "# 主通道: dingtalk / serverchan\n"
     "primary = dingtalk\n"
     "\n"
@@ -138,13 +138,24 @@ static constexpr const char* DINGTALK_BASE_URL =
     "https://oapi.dingtalk.com/robot/send?access_token=";
 
 
-/** 解析 unsigned long 字符串 */
-static unsigned long parse_ulong(std::string_view s) {
+/** 解析无符号超时值，非数字或越界时返回 fallback */
+static unsigned long parse_timeout_or(std::string_view s,
+                                      unsigned long fallback,
+                                      unsigned long min_value = 100,
+                                      unsigned long max_value = 30000) {
+    if (s.empty()) return fallback;
+
     unsigned long val = 0;
+    bool has_digit = false;
     for (char c : s) {
         if (c < '0' || c > '9') break;
+        has_digit = true;
         val = val * 10 + static_cast<unsigned long>(c - '0');
     }
+
+    if (!has_digit) return fallback;
+    if (val < min_value) return min_value;
+    if (val > max_value) return max_value;
     return val;
 }
 
@@ -213,10 +224,10 @@ static void load_config() {
             else if (key == "primary") g_config.notify_primary = val;
         } else if (section == "[http]") {
             if (key == "proxy")  g_config.http_proxy = val;
-            else if (key == "resolve_timeout")  g_config.http_resolve_timeout  = parse_ulong(val);
-            else if (key == "connect_timeout")  g_config.http_connect_timeout  = parse_ulong(val);
-            else if (key == "send_timeout")     g_config.http_send_timeout     = parse_ulong(val);
-            else if (key == "receive_timeout")  g_config.http_receive_timeout  = parse_ulong(val);
+            else if (key == "resolve_timeout")  g_config.http_resolve_timeout  = parse_timeout_or(val, 300);
+            else if (key == "connect_timeout")  g_config.http_connect_timeout  = parse_timeout_or(val, 500);
+            else if (key == "send_timeout")     g_config.http_send_timeout     = parse_timeout_or(val, 500);
+            else if (key == "receive_timeout")  g_config.http_receive_timeout  = parse_timeout_or(val, 800);
         }
     }
 }
@@ -456,17 +467,20 @@ static const wchar_t* fast_event_desc_w(unsigned long event_id) {
 }
 
 
-bool query_latest_event(unsigned long event_id, EventInfo& info) {
-    SN_TIMER("query_latest_event");
-
-    wchar_t query[256];
-    swprintf_s(query, L"*[System[(EventID=%lu)]]", event_id);
-
-    // EvtQueryChannelPath: 通道路径模式
-    // EvtQueryReverseDirection: 结果从最新到最旧，配合 EvtNext(1) 取最新事件
+/**
+ * 通用事件查询核心 — 执行 EvtQuery→EvtNext→EvtRender→EvtFormatMessage 流水线
+ *
+ * @param xpath     XPath 查询表达式
+ * @param flags     EvtQuery 标志 (EvtQueryChannelPath 自动追加)
+ * @param info      输出 EventInfo
+ * @param event_id  事件 ID (用于决定是否执行 EvtFormatMessage)
+ * @return true 成功
+ */
+static bool query_event_core(const wchar_t* xpath, DWORD flags,
+                             EventInfo& info, unsigned long event_id) {
     EVT_HANDLE hResults = EvtQuery(
-        nullptr, EVENT_CHANNEL, query,
-        EvtQueryChannelPath | EvtQueryReverseDirection);
+        nullptr, EVENT_CHANNEL, xpath,
+        EvtQueryChannelPath | flags);
     if (!hResults) {
         std::fprintf(stderr, "[错误] EvtQuery 失败: GLE=%lu\n", GetLastError());
         return false;
@@ -486,7 +500,6 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
     }
     if (dwReturned == 0) return false;
 
-    // EvtCreateRenderContext + EvtRenderEventValues：只提取 3 个必要属性
     const wchar_t* properties[] = {EVT_PROP_TIME, EVT_PROP_COMPUTER, EVT_PROP_PROVIDER};
     EVT_HANDLE hContext = EvtCreateRenderContext(3, properties, EvtRenderContextValues);
     if (!hContext) {
@@ -495,7 +508,6 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
         return false;
     }
 
-    // 两段调用：先获取缓冲区大小，再分配并填充
     DWORD render_size = 0;
     DWORD props = 0;
     BOOL render_ok = EvtRender(hContext, hEvent, EvtRenderEventValues,
@@ -519,7 +531,6 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
 
     auto* values = reinterpret_cast<PEVT_VARIANT>(render_buffer.data());
 
-    // 提取时间 — EvtSystemTimeCreated → EvtVarTypeFileTime，UTC → 本地时间
     if (values[0].Type == EvtVarTypeFileTime && values[0].FileTimeVal) {
         FILETIME ft;
         ULONGLONG ft_val = values[0].FileTimeVal;
@@ -541,14 +552,14 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
         info.computer = values[1].StringVal;
     }
 
-    // 非 1074 事件跳过 EvtFormatMessage（大幅减少开销）
+    // 非 1074 → 固定描述，跳过 EvtFormatMessage
     if (!need_full_event_message(event_id)) {
         info.desc = fast_event_desc_w(event_id);
         EvtClose(hEvent);
         return true;
     }
 
-    // --- 以下仅 1074 执行 ---
+    // --- 仅 1074: EvtFormatMessage ---
     std::wstring provider_name;
     if (values[2].Type == EvtVarTypeString && values[2].StringVal) {
         provider_name = values[2].StringVal;
@@ -560,7 +571,6 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
             nullptr, provider_name.c_str(), nullptr, 0, 0);
     }
 
-    // BufferSize/BufferUsed 单位是字符数 (wchar_t)，非字节数
     DWORD msg_size = 0;
     EvtFormatMessage(hPublisher, hEvent, 0, 0, nullptr,
                      EvtFormatMessageEvent, 0, nullptr, &msg_size);
@@ -585,6 +595,34 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
     if (hPublisher) EvtClose(hPublisher);
     EvtClose(hEvent);
     return !info.date.empty() || !info.desc.empty();
+}
+
+
+bool query_latest_event(unsigned long event_id, EventInfo& info) {
+    SN_TIMER("query_latest_event");
+
+    wchar_t query[256];
+    swprintf_s(query, L"*[System[(EventID=%lu)]]", event_id);
+
+    return query_event_core(query, EvtQueryReverseDirection, info, event_id);
+}
+
+
+/**
+ * 按 EventRecordID 精确查询事件 (用于 1074 fast path)
+ * 避免短时间内多个 1074 时取错记录
+ */
+static bool query_event_by_record_id(unsigned long long record_id,
+                                     unsigned long event_id,
+                                     EventInfo& info) {
+    SN_TIMER("query_event_by_record_id");
+
+    wchar_t query[256];
+    swprintf_s(query,
+        L"*[System[(EventID=%lu) and (EventRecordID=%llu)]]",
+        event_id, record_id);
+
+    return query_event_core(query, 0, info, event_id);
 }
 
 
@@ -726,15 +764,47 @@ void send_notify(const std::string& title, const std::string& desp) {
 
 // 命令行解析 & process_event_notify
 
-/** 解析 ISO-8601 时间字符串为 wstring */
-static std::wstring local_time_from_iso(std::wstring_view iso) {
+/** 解析 ISO-8601 UTC 时间字符串并转为本地时间 */
+static std::wstring local_time_from_iso_utc(std::wstring_view iso) {
     // 输入如 "2026-06-08T12:30:45.000000000Z" 或 "2026-06-08T12:30:45"
     if (iso.size() < 19) return std::wstring(iso);
-    // 截取到秒 "YYYY-MM-DDTHH:MM:SS"
-    // 转为 "YYYY-MM-DD HH:MM:SS"
-    std::wstring local(iso.substr(0, 19));
-    local[10] = L' ';
-    return local;
+
+    SYSTEMTIME utc{};
+    std::wstring s(iso.substr(0, 19));  // "YYYY-MM-DDTHH:MM:SS"
+    s[10] = L' ';  // T → 空格，用于 swscanf
+    if (swscanf_s(s.c_str(), L"%hu-%hu-%hu %hu:%hu:%hu",
+                  &utc.wYear, &utc.wMonth, &utc.wDay,
+                  &utc.wHour, &utc.wMinute, &utc.wSecond) != 6) {
+        return std::wstring(iso);
+    }
+
+    SYSTEMTIME local{};
+    if (!SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local)) {
+        return std::wstring(iso);
+    }
+
+    wchar_t buf[32];
+    swprintf_s(buf, L"%04u-%02u-%02u %02u:%02u:%02u",
+               local.wYear, local.wMonth, local.wDay,
+               local.wHour, local.wMinute, local.wSecond);
+    return buf;
+}
+
+
+/** 检测 Task Scheduler 变量未被替换 (形如 $(xxx)) */
+static bool is_unresolved_task_var(std::wstring_view v) {
+    return v.size() >= 3 && v[0] == L'$' && v[1] == L'(';
+}
+
+/** 综合检查 EventArgs 是否可用作 fast path */
+static bool is_usable_event_args(unsigned long expected_event_id,
+                                 const EventArgs& args) {
+    if (!args.valid) return false;
+    if (args.event_id != expected_event_id) return false;
+    if (args.system_time.empty()) return false;
+    if (is_unresolved_task_var(args.system_time)) return false;
+    if (!args.computer.empty() && is_unresolved_task_var(args.computer)) return false;
+    return true;
 }
 
 
@@ -749,7 +819,7 @@ bool parse_event_args(int argc, wchar_t* argv[], EventArgs& out) {
             out.event_id = wcstoul(argv[++i], nullptr, 10);
             has_any = true;
         } else if (arg == L"--time" && i + 1 < argc) {
-            out.system_time = local_time_from_iso(argv[++i]);
+            out.system_time = local_time_from_iso_utc(argv[++i]);
             has_any = true;
         } else if (arg == L"--computer" && i + 1 < argc) {
             out.computer = argv[++i];
@@ -783,15 +853,23 @@ int process_event_notify(unsigned long event_id,
     try {
         EventInfo info;
 
-        if (args && args->valid && args->event_id == event_id
-            && !args->system_time.empty()) {
+        if (args && is_usable_event_args(event_id, *args)) {
             // fast path: 使用 Task Scheduler 传入的字段
             info.date = args->system_time;
             info.computer = args->computer;
             if (event_id != 1074) {
                 info.desc = fast_event_desc_w(event_id);
+            } else if (args->record_id != 0ULL) {
+                // 1074 + EventRecordID: 精确查询触发任务的那条事件
+                if (!query_event_by_record_id(args->record_id,
+                                              event_id, info)) {
+                    std::fprintf(stderr,
+                        "[错误] 未找到 EventRecordID=%llu 的 EventID=%lu 记录\n",
+                        args->record_id, event_id);
+                    return 1;
+                }
             } else {
-                // 1074 仍需查询完整消息
+                // 1074 无 record_id: 回退到查询最新
                 if (!query_latest_event(event_id, info)) {
                     std::fprintf(stderr,
                         "[错误] 未在系统日志中找到 EventID=%lu 的记录\n", event_id);

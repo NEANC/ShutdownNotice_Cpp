@@ -285,7 +285,7 @@ secret =
 
 [notify]
 # 通知策略: primary_only / failover / both_sequential
-mode = both_sequential
+mode = failover
 # 主通道: dingtalk / serverchan
 primary = dingtalk
 
