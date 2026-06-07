@@ -28,6 +28,12 @@ struct EventArgs {
 std::string wide_to_utf8(std::wstring_view wstr);
 
 /**
+ * 诊断版本等待用户按键
+ * 仅在 SN_DEBUG_TIMING 定义时生效，Release 版本为空操作
+ */
+void debug_wait_if_enabled();
+
+/**
  * 查询最新的指定事件ID的系统日志
  *
  * @param event_id Windows 事件 ID (如 41, 1074, 6005 等)
