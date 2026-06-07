@@ -75,7 +75,7 @@ void debug_wait_if_enabled() {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 
-    const wchar_t msg[] = L"\n[诊断] 按 Enter 键退出...";
+    const wchar_t msg[] = L"\n[结束] 按 Enter 键退出...";
     DWORD written = 0;
     WriteConsoleW(GetStdHandle(STD_ERROR_HANDLE), msg,
                   static_cast<DWORD>(wcslen(msg)), &written, nullptr);
@@ -93,6 +93,8 @@ struct ConfigCache {
     // [notify]
     std::string notify_mode = "failover";            ///< primary_only | failover | both_sequential
     std::string notify_primary = "dingtalk";       ///< dingtalk | serverchan
+    // [http]
+    std::string ack_mode = "response_header";        ///< response_header | send_completed
 
     bool loaded = false;
 };
@@ -129,6 +131,10 @@ static constexpr const char* CONFIG_TEMPLATE =
     "\n"
     "# 钉钉机器人加签密钥 (可选)，留空则不启用加签\n"
     "secret = \n"
+    "\n"
+    "[http]\n"
+    "# 确认模式: response_header (等待服务器返回状态码) / send_completed (发送后立即终止程序，不保证信息送达)\n"
+    "ack_mode = response_header\n";
 
 
 /** 钉钉 Webhook 基础 URL */
@@ -195,6 +201,8 @@ static void load_config() {
         } else if (section == "[notify]") {
             if (key == "mode")  g_config.notify_mode = val;
             else if (key == "primary") g_config.notify_primary = val;
+        } else if (section == "[http]") {
+            if (key == "ack_mode")  g_config.ack_mode = val;
         }
     }
 }
@@ -328,23 +336,37 @@ static void append_json_escaped(std::string& out, std::string_view s) {
 static bool http_post_json(const std::wstring& host, WORD port,
                            const std::wstring& path, bool use_ssl,
                            const std::string& json_body) {
-    HINTERNET hSession = WinHttpOpen(
-        L"ShutdownNotice/1.0",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME,
-        WINHTTP_NO_PROXY_BYPASS, 0);
+    SN_TIMER("http.total");
+
+    HINTERNET hSession = nullptr;
+    {
+        SN_TIMER("http.WinHttpOpen");
+        hSession = WinHttpOpen(
+            L"ShutdownNotice/1.0",
+            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+            WINHTTP_NO_PROXY_NAME,
+            WINHTTP_NO_PROXY_BYPASS, 0);
+    }
     if (!hSession) return false;
 
-    HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), port, 0);
+    HINTERNET hConnect = nullptr;
+    {
+        SN_TIMER("http.WinHttpConnect");
+        hConnect = WinHttpConnect(hSession, host.c_str(), port, 0);
+    }
     if (!hConnect) {
         WinHttpCloseHandle(hSession);
         return false;
     }
 
     DWORD flags = use_ssl ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET hRequest = WinHttpOpenRequest(
-        hConnect, L"POST", path.c_str(), nullptr,
-        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    HINTERNET hRequest = nullptr;
+    {
+        SN_TIMER("http.WinHttpOpenRequest");
+        hRequest = WinHttpOpenRequest(
+            hConnect, L"POST", path.c_str(), nullptr,
+            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    }
     if (!hRequest) {
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
@@ -360,11 +382,15 @@ static bool http_post_json(const std::wstring& host, WORD port,
     const wchar_t* headers = L"Content-Type: application/json; charset=utf-8\r\n";
     DWORD header_len = static_cast<DWORD>(wcslen(headers));
 
-    BOOL ok = WinHttpSendRequest(
-        hRequest, headers, header_len,
-        const_cast<char*>(json_body.data()),
-        static_cast<DWORD>(json_body.size()),
-        static_cast<DWORD>(json_body.size()), 0);
+    BOOL ok = FALSE;
+    {
+        SN_TIMER("http.WinHttpSendRequest");
+        ok = WinHttpSendRequest(
+            hRequest, headers, header_len,
+            const_cast<char*>(json_body.data()),
+            static_cast<DWORD>(json_body.size()),
+            static_cast<DWORD>(json_body.size()), 0);
+    }
 
     if (!ok) {
         std::fprintf(stderr, "[错误] HTTP 请求失败: %lu\n", GetLastError());
@@ -374,7 +400,20 @@ static bool http_post_json(const std::wstring& host, WORD port,
         return false;
     }
 
-    ok = WinHttpReceiveResponse(hRequest, nullptr);
+    // 极速模式: 发送完成即返回，不等待服务器响应
+    load_config();
+    if (g_config.ack_mode == "send_completed") {
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return true;
+    }
+
+    {
+        SN_TIMER("http.WinHttpReceiveResponse");
+        ok = WinHttpReceiveResponse(hRequest, nullptr);
+    }
+
     DWORD status_code = 0;
     DWORD status_size = sizeof(status_code);
     if (ok) {
@@ -594,7 +633,7 @@ bool send_serverchan_notify(const std::string& title,
                             const std::string& desp) {
     const auto& sendkey = get_sendkey();
     if (sendkey.empty()) {
-        std::fprintf(stderr, "[Server酱] 未配置 sendkey, 跳过\n");
+        std::fprintf(stderr, "[ServerChan] 未配置 sendkey, 跳过\n");
         return false;
     }
 

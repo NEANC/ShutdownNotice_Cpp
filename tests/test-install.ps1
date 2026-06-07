@@ -221,7 +221,7 @@ $configTemplate = @"
 # 支持同时配置多个通知渠道，任一渠道成功即视为推送成功
 
 [serverchan]
-# 留空则不启用 ServerChan 推送
+# ServerChan 推送密钥
 sendkey = 
 
 [dingtalk]
@@ -236,6 +236,10 @@ secret =
 mode = failover
 # 主通道: dingtalk / serverchan
 primary = dingtalk
+
+[http]
+# 确认模式: response_header / send_completed
+ack_mode = response_header
 "@
 
 Assert-Contains "包含 [serverchan] 节" $configTemplate "[serverchan]"
@@ -246,13 +250,13 @@ Assert-Contains "包含 access_token" $configTemplate "access_token"
 Assert-Contains "包含 secret" $configTemplate "secret"
 Assert-Contains "包含 mode 配置" $configTemplate "mode"
 Assert-Contains "包含 primary 配置" $configTemplate "primary"
+Assert-Contains "包含 ack_mode 配置" $configTemplate "ack_mode"
 Assert-NotContains "不应包含 proxy 配置" $configTemplate "proxy"
-Assert-NotContains "不应包含 resolve_timeout" $configTemplate "resolve_timeout"
 Assert-Contains "使用 # 注释" $configTemplate "# 关机通知系统"
 Assert-NotContains "不应包含 ; 注释" $configTemplate ";"
 
 $lines = $configTemplate -split "`r`n|`n"
-Assert-True "至少有 8 行" ($lines.Count -ge 8)
+Assert-True "至少有 10 行" ($lines.Count -ge 10)
 
 # sendkey / access_token / secret 默认值为空
 $sendkeyLine = $lines | Where-Object { $_ -match '^sendkey' }

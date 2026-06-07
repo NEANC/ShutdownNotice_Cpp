@@ -288,6 +288,10 @@ secret =
 mode = failover
 # 主通道: dingtalk / serverchan
 primary = dingtalk
+
+[http]
+# 确认模式: response_header (等待服务器返回状态码) / send_completed (发送后立即终止程序，不保证信息送达)
+ack_mode = response_header
 "@
 
     Set-Content -Path $configPath -Value $template -Encoding UTF8
