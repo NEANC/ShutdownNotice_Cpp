@@ -330,7 +330,9 @@ static bool http_post_json(const std::wstring& host, WORD port,
                            const std::string& json_body) {
     HINTERNET hSession = WinHttpOpen(
         L"ShutdownNotice/1.0",
-        0, 0, 0, 0);
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return false;
 
     HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), port, 0);
