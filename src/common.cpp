@@ -42,7 +42,13 @@ public:
         QueryPerformanceCounter(&end);
         double ms = 1000.0 * static_cast<double>(end.QuadPart - start_.QuadPart)
                   / static_cast<double>(freq_.QuadPart);
-        std::fprintf(stderr, "[耗时] %s: %.3f ms\n", name_, ms);
+        wchar_t buf[128];
+        int len = swprintf_s(buf, L"[耗时] %hs: %.3f ms\n", name_, ms);
+        if (len > 0) {
+            DWORD written = 0;
+            WriteConsoleW(GetStdHandle(STD_ERROR_HANDLE), buf,
+                          static_cast<DWORD>(len), &written, nullptr);
+        }
     }
 private:
     const char* name_;
@@ -54,9 +60,12 @@ private:
 #define SN_TIMER(name) ((void)0)
 #endif
 
-/** 诊断版本等待用户按键。Release 版本仅在调用点用 #ifdef 排除 */
+/** 诊断版本等待用户按键。使用 WriteConsoleW 避免中文乱码 */
 void debug_wait_if_enabled() {
-    std::fprintf(stderr, "\n[诊断] 按 Enter 键退出...");
+    const wchar_t msg[] = L"\n[诊断] 按 Enter 键退出...";
+    DWORD written = 0;
+    WriteConsoleW(GetStdHandle(STD_ERROR_HANDLE), msg,
+                  static_cast<DWORD>(wcslen(msg)), &written, nullptr);
     std::getchar();
 }
 
@@ -375,7 +384,7 @@ static bool http_post_json(const std::wstring& host, WORD port,
                        g_config.http_send_timeout,
                        g_config.http_receive_timeout);
 
-    const wchar_t* headers = L"Content-Type: application/json\r\n";
+    const wchar_t* headers = L"Content-Type: application/json; charset=utf-8\r\n";
     DWORD header_len = static_cast<DWORD>(wcslen(headers));
 
     BOOL ok = WinHttpSendRequest(
