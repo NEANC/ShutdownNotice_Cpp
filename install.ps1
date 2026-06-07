@@ -55,6 +55,12 @@ $Script:TaskTemplate = @'
     <EventTrigger>
       <Enabled>true</Enabled>
       <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[(EventID=__EVENTID__)]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+      <ValueQueries>
+        <Value name="EventRecordID">Event/System/EventRecordID</Value>
+        <Value name="SystemTime">Event/System/TimeCreated/@SystemTime</Value>
+        <Value name="Computer">Event/System/Computer</Value>
+        <Value name="Provider">Event/System/Provider/@Name</Value>
+      </ValueQueries>
     </EventTrigger>
   </Triggers>
   <Principals>
@@ -65,7 +71,7 @@ $Script:TaskTemplate = @'
     </Principal>
   </Principals>
   <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
     <AllowHardTerminate>true</AllowHardTerminate>
@@ -86,6 +92,7 @@ $Script:TaskTemplate = @'
   <Actions Context="Author">
     <Exec>
       <Command>__EXEPATH__</Command>
+      <Arguments>--event-id __EVENTID__ --record "$(EventRecordID)" --time "$(SystemTime)" --computer "$(Computer)" --provider "$(Provider)"</Arguments>
     </Exec>
   </Actions>
 </Task>
@@ -274,7 +281,22 @@ sendkey =
 webhook = 
 
 # 钉钉机器人加签密钥 (可选)
-secret =
+secret = 
+
+[notify]
+# 通知策略: primary_only / failover / both_sequential
+mode = both_sequential
+# 主通道: dingtalk / serverchan
+primary = dingtalk
+
+[http]
+# 代理模式: none / default
+proxy = default
+# 各阶段超时(毫秒)
+resolve_timeout = 300
+connect_timeout = 500
+send_timeout = 500
+receive_timeout = 800
 "@
 
     Set-Content -Path $configPath -Value $template -Encoding UTF8

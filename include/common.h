@@ -5,13 +5,23 @@
 
 
 // 关机通知系统 - 共享声明
-// 功能：查询 Windows 事件日志，格式化后通过 Server酱 推送通知
+// 功能：查询 Windows 事件日志，格式化后通过 Server酱/钉钉 推送通知
 
 /** 事件日志查询结果 */
 struct EventInfo {
     std::wstring date;      ///< 事件发生时间
     std::wstring computer;  ///< 计算机名称
     std::wstring desc;      ///< 事件详细描述
+};
+
+/** 任务计划程序通过 ValueQueries 传入的事件参数 */
+struct EventArgs {
+    unsigned long event_id = 0;       ///< 事件 ID
+    std::wstring system_time;         ///< Event/System/TimeCreated/@SystemTime
+    std::wstring computer;            ///< Event/System/Computer
+    std::wstring provider;            ///< Event/System/Provider/@Name
+    unsigned long long record_id = 0; ///< Event/System/EventRecordID
+    bool valid = false;               ///< 所有字段是否已成功解析
 };
 
 /** 将宽字符串转换为 UTF-8 编码字符串 */
@@ -59,6 +69,17 @@ bool send_dingtalk_notify(const std::string& title, const std::string& desp);
 void send_notify(const std::string& title, const std::string& desp);
 
 /**
+ * 解析命令行参数中的事件信息
+ * 支持通过 --event-id / --time / --computer 等参数跳过日志查询
+ *
+ * @param argc 命令行参数数量
+ * @param argv 命令行参数
+ * @param out  输出参数，存储解析结果
+ * @return true 任意字段解析成功, false 无相关参数
+ */
+bool parse_event_args(int argc, wchar_t* argv[], EventArgs& out);
+
+/**
  * 便捷函数：查询事件日志并发送通知
  *
  * @param event_id     Windows 事件 ID
@@ -69,3 +90,20 @@ void send_notify(const std::string& title, const std::string& desp);
 int process_event_notify(unsigned long event_id,
                          const std::string& title,
                          const std::string& event_label);
+
+/**
+ * 便捷函数：查询事件日志并发送通知（接受任务计划程序入参）
+ *
+ * Task Scheduler 可通过 ValueQueries 把事件字段传给 exe，
+ * 此时跳过 EvtQuery/EvtRender，直接使用传入的字段。
+ *
+ * @param event_id     Windows 事件 ID
+ * @param title        通知标题
+ * @param event_label  事件标签
+ * @param args         任务计划程序传入的事件参数（可为 nullptr 走回退查询）
+ * @return int 0 成功, 1 失败
+ */
+int process_event_notify(unsigned long event_id,
+                         const std::string& title,
+                         const std::string& event_label,
+                         const EventArgs* args);

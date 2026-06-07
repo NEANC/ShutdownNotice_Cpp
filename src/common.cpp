@@ -7,6 +7,7 @@
 #include <wincrypt.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
@@ -25,18 +26,56 @@
 // 硬编码参数
 static constexpr const wchar_t* EVENT_CHANNEL = L"System";            ///< 事件日志通道
 static constexpr const wchar_t* SERVER_HOST = L"sctapi.ftqq.com";     ///< Server酱 API 主机
-static constexpr unsigned long HTTP_TIMEOUT_MS = 1000;                ///< HTTP 超时(毫秒)
 static constexpr const wchar_t* CONFIG_FILE = L"config.ini";          ///< 配置文件名
+static constexpr unsigned long DEFAULT_HTTP_TIMEOUT_MS = 1000;        ///< HTTP 默认超时
+
+// 耗时统计（仅在 define SN_DEBUG_TIMING 时启用）
+#ifdef SN_DEBUG_TIMING
+class ScopeTimer {
+public:
+    explicit ScopeTimer(const char* name) : name_(name) {
+        QueryPerformanceFrequency(&freq_);
+        QueryPerformanceCounter(&start_);
+    }
+    ~ScopeTimer() {
+        LARGE_INTEGER end;
+        QueryPerformanceCounter(&end);
+        double ms = 1000.0 * static_cast<double>(end.QuadPart - start_.QuadPart)
+                  / static_cast<double>(freq_.QuadPart);
+        std::fprintf(stderr, "[耗时] %s: %.3f ms\n", name_, ms);
+    }
+private:
+    const char* name_;
+    LARGE_INTEGER freq_{};
+    LARGE_INTEGER start_{};
+};
+#define SN_TIMER(name) ScopeTimer timer_##__LINE__(name)
+#else
+#define SN_TIMER(name) ((void)0)
+#endif
 
 
-// 配置缓存 — 单次读取 config.ini，全局复用，消除重复 I/O
+// 配置缓存
 struct ConfigCache {
+    // [serverchan]
     std::string serverchan_sendkey;
+    // [dingtalk]
     std::string dingtalk_webhook;
     std::string dingtalk_secret;
+    // [notify]
+    std::string notify_mode = "both_sequential";  ///< primary_only | failover | both_sequential
+    std::string notify_primary = "dingtalk";       ///< dingtalk | serverchan
+    // [http]
+    std::string http_proxy = "default";            ///< none | default
+    unsigned long http_resolve_timeout = 300;
+    unsigned long http_connect_timeout = 500;
+    unsigned long http_send_timeout = 500;
+    unsigned long http_receive_timeout = 800;
+
     bool loaded = false;
 };
 static ConfigCache g_config;
+
 
 /** 去除字符串首尾空白字符 */
 static std::string trim(std::string_view s) {
@@ -45,6 +84,7 @@ static std::string trim(std::string_view s) {
     auto end = s.find_last_not_of(" \t\r\n");
     return std::string(s.substr(start, end - start + 1));
 }
+
 
 /** 配置文件模板内容 */
 static constexpr const char* CONFIG_TEMPLATE =
@@ -60,18 +100,45 @@ static constexpr const char* CONFIG_TEMPLATE =
     "webhook = \n"
     "\n"
     "# 钉钉机器人加签密钥 (可选)，留空则不启用加签\n"
-    "secret = \n";
+    "secret = \n"
+    "\n"
+    "[notify]\n"
+    "# 通知策略: primary_only (仅主通道) / failover (主通道失败后备用) / both_sequential (串行双通道)\n"
+    "mode = both_sequential\n"
+    "# 主通道: dingtalk / serverchan\n"
+    "primary = dingtalk\n"
+    "\n"
+    "[http]\n"
+    "# 代理模式: none (直连) / default (系统代理)\n"
+    "proxy = default\n"
+    "# 各阶段超时(毫秒)\n"
+    "resolve_timeout = 300\n"
+    "connect_timeout = 500\n"
+    "send_timeout = 500\n"
+    "receive_timeout = 800\n";
+
 
 /** 钉钉 Webhook 基础 URL */
 static constexpr const char* DINGTALK_BASE_URL =
     "https://oapi.dingtalk.com/robot/send?access_token=";
+
+
+/** 解析 unsigned long 字符串 */
+static unsigned long parse_ulong(std::string_view s) {
+    unsigned long val = 0;
+    for (char c : s) {
+        if (c < '0' || c > '9') break;
+        val = val * 10 + static_cast<unsigned long>(c - '0');
+    }
+    return val;
+}
+
 
 /** 一次性读取配置文件并缓存所有键值 */
 static void load_config() {
     if (g_config.loaded) return;
     g_config.loaded = true;
 
-    // 获取 exe 所在目录
     wchar_t exe_path[MAX_PATH] = {};
     DWORD len = GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
     if (len == 0 || len >= MAX_PATH) return;
@@ -85,7 +152,6 @@ static void load_config() {
 
     std::ifstream file(config_path);
     if (!file.is_open()) {
-        // 配置文件不存在，自动生成模板
         std::ofstream out(config_path);
         if (out.is_open()) {
             out << CONFIG_TEMPLATE;
@@ -96,7 +162,6 @@ static void load_config() {
             std::fprintf(stderr,
                 "[错误] 无法创建配置文件 config.ini\n");
         }
-        // 终止程序
         std::exit(1);
     }
 
@@ -122,16 +187,25 @@ static void load_config() {
             g_config.serverchan_sendkey = val;
         else if (section == "[dingtalk]") {
             if (key == "webhook" && !val.empty()) {
-                // 若只填了 access_token，自动拼接完整 URL
                 if (val.compare(0, 4, "http") != 0)
                     g_config.dingtalk_webhook = DINGTALK_BASE_URL + val;
                 else
                     g_config.dingtalk_webhook = val;
             } else if (key == "secret")
                 g_config.dingtalk_secret = val;
+        } else if (section == "[notify]") {
+            if (key == "mode")  g_config.notify_mode = val;
+            else if (key == "primary") g_config.notify_primary = val;
+        } else if (section == "[http]") {
+            if (key == "proxy")  g_config.http_proxy = val;
+            else if (key == "resolve_timeout")  g_config.http_resolve_timeout  = parse_ulong(val);
+            else if (key == "connect_timeout")  g_config.http_connect_timeout  = parse_ulong(val);
+            else if (key == "send_timeout")     g_config.http_send_timeout     = parse_ulong(val);
+            else if (key == "receive_timeout")  g_config.http_receive_timeout  = parse_ulong(val);
         }
     }
 }
+
 
 /** 获取 SendKey：优先从缓存读取，其次从环境变量 SC_SENDKEY */
 static const std::string& get_sendkey() {
@@ -146,6 +220,7 @@ static const std::string& get_sendkey() {
 
 
 // 辅助函数
+
 /** 将宽字符串转换为 UTF-8 编码字符串 */
 std::string wide_to_utf8(std::wstring_view wstr) {
     if (wstr.empty()) return {};
@@ -162,7 +237,8 @@ std::string wide_to_utf8(std::wstring_view wstr) {
     return result;
 }
 
-/** HMAC-SHA256 计算并返回 Base64 编码结果 */
+
+/** HMAC-SHA256，返回 Base64 编码结果。SHA-256 输出固定 32 字节，无需查询 */
 static std::string hmac_sha256_base64(const std::string& key,
                                       const std::string& data) {
     BCRYPT_ALG_HANDLE hAlg = nullptr;
@@ -187,14 +263,9 @@ static std::string hmac_sha256_base64(const std::string& key,
         reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())),
         static_cast<ULONG>(data.size()), 0);
 
-    DWORD hash_size = 0;
-    DWORD cb_result = 0;
-    BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH,
-                      reinterpret_cast<PUCHAR>(&hash_size),
-                      sizeof(hash_size), &cb_result, 0);
-
-    std::vector<BYTE> hash(hash_size);
-    status = BCryptFinishHash(hHash, hash.data(), hash_size, 0);
+    // SHA-256 固定 32 字节，省去 BCryptGetProperty 查询
+    std::array<BYTE, 32> hash{};
+    status = BCryptFinishHash(hHash, hash.data(), static_cast<ULONG>(hash.size()), 0);
 
     BCryptDestroyHash(hHash);
     BCryptCloseAlgorithmProvider(hAlg, 0);
@@ -202,18 +273,19 @@ static std::string hmac_sha256_base64(const std::string& key,
     if (!BCRYPT_SUCCESS(status)) return {};
 
     DWORD base64_size = 0;
-    CryptBinaryToStringA(hash.data(), hash_size,
+    CryptBinaryToStringA(hash.data(), static_cast<DWORD>(hash.size()),
                          CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF,
                          nullptr, &base64_size);
     if (base64_size == 0) return {};
 
     std::string result(base64_size, '\0');
-    CryptBinaryToStringA(hash.data(), hash_size,
+    CryptBinaryToStringA(hash.data(), static_cast<DWORD>(hash.size()),
                          CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF,
                          result.data(), &base64_size);
     while (!result.empty() && result.back() == '\0') result.pop_back();
     return result;
 }
+
 
 /** URL 编码（保留字母数字和 -_.~） */
 static std::string url_encode(const std::string& s) {
@@ -232,22 +304,30 @@ static std::string url_encode(const std::string& s) {
     return result;
 }
 
-/** JSON 字符串转义 */
-static std::string json_escape(const std::string& s) {
-    std::string result;
-    result.reserve(s.size());
+
+/** JSON 字符串转义 — 直接追加到目标 buffer（避免临时 std::string） */
+static void append_json_escaped(std::string& out, std::string_view s) {
     for (char c : s) {
         switch (c) {
-            case '"':  result += "\\\""; break;
-            case '\\': result += "\\\\"; break;
-            case '\n': result += "\\n";  break;
-            case '\r': result += "\\r";  break;
-            case '\t': result += "\\t";  break;
-            default:   result += c;      break;
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[7];
+                    std::snprintf(buf, sizeof(buf), "\\u%04X",
+                                  static_cast<unsigned char>(c));
+                    out += buf;
+                } else {
+                    out += c;
+                }
+                break;
         }
     }
-    return result;
 }
+
 
 /**
  * 通用 HTTP POST JSON 请求
@@ -255,9 +335,14 @@ static std::string json_escape(const std::string& s) {
 static bool http_post_json(const std::wstring& host, WORD port,
                            const std::wstring& path, bool use_ssl,
                            const std::string& json_body) {
+    load_config();
+    DWORD access_type = (g_config.http_proxy == "none")
+        ? WINHTTP_ACCESS_TYPE_NO_PROXY
+        : WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+
     HINTERNET hSession = WinHttpOpen(
         L"ShutdownNotice/1.0",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        access_type,
         WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return false;
@@ -278,8 +363,11 @@ static bool http_post_json(const std::wstring& host, WORD port,
         return false;
     }
 
-    WinHttpSetTimeouts(hRequest, HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS,
-                       HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS);
+    WinHttpSetTimeouts(hRequest,
+                       g_config.http_resolve_timeout,
+                       g_config.http_connect_timeout,
+                       g_config.http_send_timeout,
+                       g_config.http_receive_timeout);
 
     const wchar_t* headers = L"Content-Type: application/json\r\n";
     DWORD header_len = static_cast<DWORD>(wcslen(headers));
@@ -327,19 +415,40 @@ static bool http_post_json(const std::wstring& host, WORD port,
 }
 
 
-// 公共接口实现
+// 事件日志查询
+
 /** EvtRenderEventValues 属性路径 */
 static constexpr const wchar_t* EVT_PROP_TIME = L"Event/System/TimeCreated/@SystemTime";
 static constexpr const wchar_t* EVT_PROP_COMPUTER = L"Event/System/Computer";
 static constexpr const wchar_t* EVT_PROP_PROVIDER = L"Event/System/Provider/@Name";
 
+
+/** 是否需要完整的事件消息 (仅 1074 用户关机原因需原文) */
+static bool need_full_event_message(unsigned long event_id) {
+    return event_id == 1074;
+}
+
+
+/** 固定事件描述 (非 1074 事件跳过 EvtFormatMessage 开销) */
+static const wchar_t* fast_event_desc_w(unsigned long event_id) {
+    switch (event_id) {
+        case 41:   return L"系统未正常关机即重启";
+        case 6005: return L"事件日志服务已启动";
+        case 6006: return L"事件日志服务已停止";
+        case 6008: return L"上一次系统关闭是意外的";
+        default:   return L"系统事件已触发";
+    }
+}
+
+
 bool query_latest_event(unsigned long event_id, EventInfo& info) {
-    // 构建 XPath 查询，只匹配指定 EventID
+    SN_TIMER("query_latest_event");
+
     wchar_t query[256];
     swprintf_s(query, L"*[System[(EventID=%lu)]]", event_id);
 
-    // EvtQueryChannelPath: 通道路径模式 (非文件模式)
-    // EvtQueryReverseDirection: 结果从最新到最旧排列，配合 EvtNext(1) 直接取最新事件
+    // EvtQueryChannelPath: 通道路径模式
+    // EvtQueryReverseDirection: 结果从最新到最旧，配合 EvtNext(1) 取最新事件
     EVT_HANDLE hResults = EvtQuery(
         nullptr, EVENT_CHANNEL, query,
         EvtQueryChannelPath | EvtQueryReverseDirection);
@@ -348,16 +457,13 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
         return false;
     }
 
-    // 取最新一条事件 (Timeout=0ms, 立即返回)
     EVT_HANDLE hEvent = nullptr;
     DWORD dwReturned = 0;
     BOOL ok = EvtNext(hResults, 1, &hEvent, 0, 0, &dwReturned);
     DWORD evtNextErr = GetLastError();
-    EvtClose(hResults);  // 查询句柄仅在创建它的线程使用，用完立即释放
+    EvtClose(hResults);
 
     if (!ok) {
-        // ERROR_NO_MORE_ITEMS: 无匹配事件 (正常)
-        // ERROR_TIMEOUT: 超时 (Timeout=0 时等同于无事件)
         if (evtNextErr == ERROR_NO_MORE_ITEMS || evtNextErr == ERROR_TIMEOUT)
             return false;
         std::fprintf(stderr, "[错误] EvtNext 失败: GLE=%lu\n", evtNextErr);
@@ -365,9 +471,7 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
     }
     if (dwReturned == 0) return false;
 
-    // 通过 EvtCreateRenderContext + EvtRenderEventValues 只提取 3 个必要属性，
-    // 避免全量序列化/解析事件 XML。
-    // EvtSystemTimeCreated → EvtVarTypeFileTime (需转 FILETIME → 本地时间)
+    // EvtCreateRenderContext + EvtRenderEventValues：只提取 3 个必要属性
     const wchar_t* properties[] = {EVT_PROP_TIME, EVT_PROP_COMPUTER, EVT_PROP_PROVIDER};
     EVT_HANDLE hContext = EvtCreateRenderContext(3, properties, EvtRenderContextValues);
     if (!hContext) {
@@ -376,13 +480,13 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
         return false;
     }
 
-    // 两段调用: 先传 NULL/0 获取所需缓冲区大小，再分配 vector<BYTE> 并填充
+    // 两段调用：先获取缓冲区大小，再分配并填充
     DWORD render_size = 0;
     DWORD props = 0;
     BOOL render_ok = EvtRender(hContext, hEvent, EvtRenderEventValues,
                                0, nullptr, &render_size, &props);
     if (!render_ok && GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-        std::fprintf(stderr, "[错误] EvtRender 获取缓冲区大小失败: GLE=%lu\n", GetLastError());
+        std::fprintf(stderr, "[错误] EvtRender 获取缓冲区失败: GLE=%lu\n", GetLastError());
         EvtClose(hContext);
         EvtClose(hEvent);
         return false;
@@ -393,21 +497,20 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
                           render_size, render_buffer.data(), &render_size, &props);
     EvtClose(hContext);
     if (!render_ok || props < 3) {
-        std::fprintf(stderr, "[错误] EvtRender 渲染属性失败: GLE=%lu\n", GetLastError());
+        std::fprintf(stderr, "[错误] EvtRender 失败: GLE=%lu\n", GetLastError());
         EvtClose(hEvent);
         return false;
     }
 
     auto* values = reinterpret_cast<PEVT_VARIANT>(render_buffer.data());
 
-    // 提取时间 — EvtSystemTimeCreated 返回 EvtVarTypeFileTime (64-bit FILETIME)
+    // 提取时间 — EvtSystemTimeCreated → EvtVarTypeFileTime，UTC → 本地时间
     if (values[0].Type == EvtVarTypeFileTime && values[0].FileTimeVal) {
         FILETIME ft;
         ULONGLONG ft_val = values[0].FileTimeVal;
         ft.dwLowDateTime = static_cast<DWORD>(ft_val & 0xFFFFFFFF);
         ft.dwHighDateTime = static_cast<DWORD>(ft_val >> 32);
 
-        // UTC → 本地时间
         SYSTEMTIME utc, local;
         FileTimeToSystemTime(&ft, &utc);
         SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local);
@@ -419,26 +522,30 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
         info.date = buf;
     }
 
-    // 提取计算机名
     if (values[1].Type == EvtVarTypeString && values[1].StringVal) {
         info.computer = values[1].StringVal;
     }
 
-    // 提取 Provider 名称用于获取发布者元数据
+    // 非 1074 事件跳过 EvtFormatMessage（大幅减少开销）
+    if (!need_full_event_message(event_id)) {
+        info.desc = fast_event_desc_w(event_id);
+        EvtClose(hEvent);
+        return true;
+    }
+
+    // --- 以下仅 1074 执行 ---
     std::wstring provider_name;
     if (values[2].Type == EvtVarTypeString && values[2].StringVal) {
         provider_name = values[2].StringVal;
     }
 
-    // 获取发布者句柄 (用于 EvtFormatMessage 查找事件消息资源)
     EVT_HANDLE hPublisher = nullptr;
     if (!provider_name.empty()) {
         hPublisher = EvtOpenPublisherMetadata(
             nullptr, provider_name.c_str(), nullptr, 0, 0);
     }
 
-    // 两段调用: 先传 NULL 获取所需字符数，再分配 wstring 并填充
-    // BufferSize/BufferUsed 单位是字符数 (wchar_t)，不是字节数
+    // BufferSize/BufferUsed 单位是字符数 (wchar_t)，非字节数
     DWORD msg_size = 0;
     EvtFormatMessage(hPublisher, hEvent, 0, 0, nullptr,
                      EvtFormatMessageEvent, 0, nullptr, &msg_size);
@@ -450,7 +557,6 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
             EvtFormatMessageEvent, msg_size,
             msg_buffer.data(), &msg_size);
         if (ok) {
-            // 去掉尾部空字符和空行
             while (!msg_buffer.empty() &&
                    (msg_buffer.back() == L'\0' ||
                     msg_buffer.back() == L'\n' ||
@@ -461,19 +567,13 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
         }
     }
 
-    // 释放所有资源 (EvtQuery/EvtNext/EvtCreateRenderContext/EvtOpenPublisherMetadata 句柄)
     if (hPublisher) EvtClose(hPublisher);
     EvtClose(hEvent);
     return !info.date.empty() || !info.desc.empty();
 }
 
-/*
- * 性能关键路径总结:
- *   EvtQueryReverseDirection  → 最新事件优先，O(1) 取首条
- *   EvtNext(Timeout=0)        → 立即返回，不挂起等待
- *   EvtRenderEventValues      → 只提取 3 个字段，避免 XML 序列化/解析
- *   EvtFormatMessage 两段调用 → 一次分配到位，无重复拷贝
- */
+
+// 通知接口实现
 
 bool send_serverchan_notify(const std::string& title,
                             const std::string& desp) {
@@ -483,13 +583,12 @@ bool send_serverchan_notify(const std::string& title,
         return false;
     }
 
-    // 构建 JSON 请求体（预分配减少重分配）
     std::string json_body;
-    json_body.reserve(64 + title.size() + desp.size());
+    json_body.reserve(64 + title.size() + desp.size() + desp.size() / 8);
     json_body = "{\"title\":\"";
-    json_body += json_escape(title);
+    append_json_escaped(json_body, title);
     json_body += "\",\"desp\":\"";
-    json_body += json_escape(desp);
+    append_json_escaped(json_body, desp);
     json_body += "\"}";
 
     std::wstring wsendkey(sendkey.begin(), sendkey.end());
@@ -498,6 +597,7 @@ bool send_serverchan_notify(const std::string& title,
     return http_post_json(SERVER_HOST, INTERNET_DEFAULT_HTTPS_PORT,
                           path, true, json_body);
 }
+
 
 bool send_dingtalk_notify(const std::string& title,
                           const std::string& desp) {
@@ -508,7 +608,6 @@ bool send_dingtalk_notify(const std::string& title,
         return false;
     }
 
-    // 解析 URL: https://oapi.dingtalk.com/robot/send?access_token=xxx
     std::string_view url_view = webhook;
     bool use_ssl = false;
 
@@ -529,7 +628,6 @@ bool send_dingtalk_notify(const std::string& title,
         path = "/";
     }
 
-    // 加签处理（使用缓存中的 secret）
     const auto& secret = g_config.dingtalk_secret;
     if (!secret.empty()) {
         auto now = std::chrono::system_clock::now();
@@ -552,13 +650,12 @@ bool send_dingtalk_notify(const std::string& title,
         path += url_encode(sign);
     }
 
-    // 构建钉钉 Markdown 消息（预分配减少重分配）
     std::string json_body;
-    json_body.reserve(256 + title.size() + desp.size());
+    json_body.reserve(128 + title.size() + desp.size() + desp.size() / 8);
     json_body = "{\"msgtype\":\"markdown\",\"markdown\":{\"title\":\"";
-    json_body += json_escape(title);
+    append_json_escaped(json_body, title);
     json_body += "\",\"text\":\"";
-    json_body += json_escape(desp);
+    append_json_escaped(json_body, desp);
     json_body += "\"}}";
 
     std::wstring whost(host.begin(), host.end());
@@ -569,23 +666,130 @@ bool send_dingtalk_notify(const std::string& title,
     return http_post_json(whost, port, wpath, use_ssl, json_body);
 }
 
+
 void send_notify(const std::string& title, const std::string& desp) {
-    bool serverchan_ok = send_serverchan_notify(title, desp);
-    bool dingtalk_ok = send_dingtalk_notify(title, desp);
+    SN_TIMER("send_notify");
+    load_config();
+
+    const auto& mode = g_config.notify_mode;
+    const bool has_dingtalk = !g_config.dingtalk_webhook.empty();
+    const bool has_serverchan = !get_sendkey().empty();
+
+    // primary_only: 仅发主通道
+    if (mode == "primary_only") {
+        if (g_config.notify_primary == "serverchan") {
+            send_serverchan_notify(title, desp);
+        } else {
+            send_dingtalk_notify(title, desp);
+        }
+        return;
+    }
+
+    // failover: 主通道失败后尝试备用
+    if (mode == "failover") {
+        if (g_config.notify_primary == "serverchan") {
+            if (send_serverchan_notify(title, desp)) return;
+            send_dingtalk_notify(title, desp);
+        } else {
+            if (send_dingtalk_notify(title, desp)) return;
+            send_serverchan_notify(title, desp);
+        }
+        return;
+    }
+
+    // both_sequential (默认): 双渠道都发
+    bool serverchan_ok = false;
+    bool dingtalk_ok = false;
+    if (has_serverchan) serverchan_ok = send_serverchan_notify(title, desp);
+    if (has_dingtalk)   dingtalk_ok   = send_dingtalk_notify(title, desp);
 
     if (!serverchan_ok && !dingtalk_ok) {
         std::fprintf(stderr, "[通知] 所有渠道推送均失败\n");
     }
 }
 
+
+// 命令行解析 & process_event_notify
+
+/** 解析 ISO-8601 时间字符串为 wstring */
+static std::wstring local_time_from_iso(std::wstring_view iso) {
+    // 输入如 "2026-06-08T12:30:45.000000000Z" 或 "2026-06-08T12:30:45"
+    if (iso.size() < 19) return std::wstring(iso);
+    // 截取到秒 "YYYY-MM-DDTHH:MM:SS"
+    // 转为 "YYYY-MM-DD HH:MM:SS"
+    std::wstring local(iso.substr(0, 19));
+    local[10] = L' ';
+    return local;
+}
+
+
+bool parse_event_args(int argc, wchar_t* argv[], EventArgs& out) {
+    out.valid = false;
+    bool has_any = false;
+
+    for (int i = 1; i < argc; ++i) {
+        std::wstring_view arg(argv[i]);
+
+        if (arg == L"--event-id" && i + 1 < argc) {
+            out.event_id = wcstoul(argv[++i], nullptr, 10);
+            has_any = true;
+        } else if (arg == L"--time" && i + 1 < argc) {
+            out.system_time = local_time_from_iso(argv[++i]);
+            has_any = true;
+        } else if (arg == L"--computer" && i + 1 < argc) {
+            out.computer = argv[++i];
+            has_any = true;
+        } else if (arg == L"--provider" && i + 1 < argc) {
+            out.provider = argv[++i];
+            has_any = true;
+        } else if (arg == L"--record" && i + 1 < argc) {
+            out.record_id = _wcstoui64(argv[++i], nullptr, 10);
+            has_any = true;
+        }
+    }
+
+    out.valid = has_any;
+    return has_any;
+}
+
+
 int process_event_notify(unsigned long event_id,
                          const std::string& title,
                          const std::string& event_label) {
+    return process_event_notify(event_id, title, event_label, nullptr);
+}
+
+
+int process_event_notify(unsigned long event_id,
+                         const std::string& title,
+                         const std::string& event_label,
+                         const EventArgs* args) {
+    SN_TIMER("process_event_notify");
     try {
         EventInfo info;
-        if (!query_latest_event(event_id, info)) {
-            std::fprintf(stderr, "[错误] 未在系统日志中找到 EventID=%lu 的记录\n", event_id);
-            return 1;
+
+        if (args && args->valid && args->event_id == event_id
+            && !args->system_time.empty()) {
+            // fast path: 使用 Task Scheduler 传入的字段
+            info.date = args->system_time;
+            info.computer = args->computer;
+            if (event_id != 1074) {
+                info.desc = fast_event_desc_w(event_id);
+            } else {
+                // 1074 仍需查询完整消息
+                if (!query_latest_event(event_id, info)) {
+                    std::fprintf(stderr,
+                        "[错误] 未在系统日志中找到 EventID=%lu 的记录\n", event_id);
+                    return 1;
+                }
+            }
+        } else {
+            // fallback: 查日志
+            if (!query_latest_event(event_id, info)) {
+                std::fprintf(stderr,
+                    "[错误] 未在系统日志中找到 EventID=%lu 的记录\n", event_id);
+                return 1;
+            }
         }
 
         // 构建 Markdown 格式的通知内容
