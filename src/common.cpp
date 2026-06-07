@@ -345,7 +345,7 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
 
     EVT_HANDLE hEvent = nullptr;
     DWORD dwReturned = 0;
-    BOOL ok = EvtNext(hResults, 1, &hEvent, INFINITE, 0, &dwReturned);
+    BOOL ok = EvtNext(hResults, 1, &hEvent, 0, 0, &dwReturned);
     EvtClose(hResults);
 
     if (!ok || dwReturned == 0) return false;
@@ -529,7 +529,10 @@ int process_event_notify(unsigned long event_id,
                          const std::string& event_label) {
     try {
         EventInfo info;
-        if (!query_latest_event(event_id, info)) return 1;
+        if (!query_latest_event(event_id, info)) {
+            std::fprintf(stderr, "[错误] 未在系统日志中找到 EventID=%lu 的记录\n", event_id);
+            return 1;
+        }
 
         // 构建 Markdown 格式的通知内容
         std::string desp;
