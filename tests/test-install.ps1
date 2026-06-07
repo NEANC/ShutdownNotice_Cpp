@@ -236,33 +236,23 @@ secret =
 mode = failover
 # 主通道: dingtalk / serverchan
 primary = dingtalk
-
-[http]
-# 代理模式: none / default
-proxy = default
-# 各阶段超时(毫秒)
-resolve_timeout = 300
-connect_timeout = 500
-send_timeout = 500
-receive_timeout = 800
 "@
 
 Assert-Contains "包含 [serverchan] 节" $configTemplate "[serverchan]"
 Assert-Contains "包含 [dingtalk] 节" $configTemplate "[dingtalk]"
 Assert-Contains "包含 [notify] 节" $configTemplate "[notify]"
-Assert-Contains "包含 [http] 节" $configTemplate "[http]"
 Assert-Contains "包含 sendkey" $configTemplate "sendkey"
 Assert-Contains "包含 webhook" $configTemplate "webhook"
 Assert-Contains "包含 secret" $configTemplate "secret"
 Assert-Contains "包含 mode 配置" $configTemplate "mode"
 Assert-Contains "包含 primary 配置" $configTemplate "primary"
-Assert-Contains "包含 proxy 配置" $configTemplate "proxy"
-Assert-Contains "包含 resolve_timeout" $configTemplate "resolve_timeout"
+Assert-NotContains "不应包含 proxy 配置" $configTemplate "proxy"
+Assert-NotContains "不应包含 resolve_timeout" $configTemplate "resolve_timeout"
 Assert-Contains "使用 # 注释" $configTemplate "# 关机通知系统"
 Assert-NotContains "不应包含 ; 注释" $configTemplate ";"
 
 $lines = $configTemplate -split "`r`n|`n"
-Assert-True "至少有 12 行" ($lines.Count -ge 12)
+Assert-True "至少有 8 行" ($lines.Count -ge 8)
 
 # sendkey / webhook / secret 默认值为空
 $sendkeyLine = $lines | Where-Object { $_ -match '^sendkey' }

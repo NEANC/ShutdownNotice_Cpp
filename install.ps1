@@ -288,15 +288,6 @@ secret =
 mode = failover
 # 主通道: dingtalk / serverchan
 primary = dingtalk
-
-[http]
-# 代理模式: none / default
-proxy = default
-# 各阶段超时(毫秒)
-resolve_timeout = 300
-connect_timeout = 500
-send_timeout = 500
-receive_timeout = 800
 "@
 
     Set-Content -Path $configPath -Value $template -Encoding UTF8

@@ -27,7 +27,10 @@
 static constexpr const wchar_t* EVENT_CHANNEL = L"System";            ///< 事件日志通道
 static constexpr const wchar_t* SERVER_HOST = L"sctapi.ftqq.com";     ///< Server酱 API 主机
 static constexpr const wchar_t* CONFIG_FILE = L"config.ini";          ///< 配置文件名
-static constexpr unsigned long DEFAULT_HTTP_TIMEOUT_MS = 1000;        ///< HTTP 默认超时
+static constexpr unsigned long HTTP_RESOLVE_TIMEOUT_MS = 300;         ///< DNS 解析超时
+static constexpr unsigned long HTTP_CONNECT_TIMEOUT_MS = 500;         ///< 连接超时
+static constexpr unsigned long HTTP_SEND_TIMEOUT_MS = 500;            ///< 发送超时
+static constexpr unsigned long HTTP_RECEIVE_TIMEOUT_MS = 800;         ///< 接收超时
 
 // 耗时统计（仅在 define SN_DEBUG_TIMING 时启用）
 #ifdef SN_DEBUG_TIMING
@@ -84,12 +87,6 @@ struct ConfigCache {
     // [notify]
     std::string notify_mode = "failover";            ///< primary_only | failover | both_sequential
     std::string notify_primary = "dingtalk";       ///< dingtalk | serverchan
-    // [http]
-    std::string http_proxy = "default";            ///< none | default
-    unsigned long http_resolve_timeout = 300;
-    unsigned long http_connect_timeout = 500;
-    unsigned long http_send_timeout = 500;
-    unsigned long http_receive_timeout = 800;
 
     bool loaded = false;
 };
@@ -111,11 +108,11 @@ static constexpr const char* CONFIG_TEMPLATE =
     "# 支持同时配置多个通知渠道，任一渠道成功即视为推送成功\n"
     "\n"
     "[serverchan]\n"
-    "# 留空则不启用 ServerChan 推送\n"
+    "# ServerChan 推送密钥\n"
     "sendkey = \n"
     "\n"
     "[dingtalk]\n"
-    "# 留空则不启用钉钉推送\n"
+    "# 钉钉机器人 Webhook\n"
     "webhook = \n"
     "\n"
     "# 钉钉机器人加签密钥 (可选)，留空则不启用加签\n"
@@ -125,43 +122,12 @@ static constexpr const char* CONFIG_TEMPLATE =
     "# 通知策略: primary_only (仅主通道) / failover (主通道失败后备用) / both_sequential (串行双通道)\n"
     "mode = failover\n"
     "# 主通道: dingtalk / serverchan\n"
-    "primary = dingtalk\n"
-    "\n"
-    "[http]\n"
-    "# 代理模式: none (直连) / default (系统代理)\n"
-    "proxy = default\n"
-    "# 各阶段超时(毫秒)\n"
-    "resolve_timeout = 300\n"
-    "connect_timeout = 500\n"
-    "send_timeout = 500\n"
-    "receive_timeout = 800\n";
+    "primary = dingtalk\n";
 
 
 /** 钉钉 Webhook 基础 URL */
 static constexpr const char* DINGTALK_BASE_URL =
     "https://oapi.dingtalk.com/robot/send?access_token=";
-
-
-/** 解析无符号超时值，非数字或越界时返回 fallback */
-static unsigned long parse_timeout_or(std::string_view s,
-                                      unsigned long fallback,
-                                      unsigned long min_value = 100,
-                                      unsigned long max_value = 30000) {
-    if (s.empty()) return fallback;
-
-    unsigned long val = 0;
-    bool has_digit = false;
-    for (char c : s) {
-        if (c < '0' || c > '9') break;
-        has_digit = true;
-        val = val * 10 + static_cast<unsigned long>(c - '0');
-    }
-
-    if (!has_digit) return fallback;
-    if (val < min_value) return min_value;
-    if (val > max_value) return max_value;
-    return val;
-}
 
 
 /** 一次性读取配置文件并缓存所有键值 */
@@ -226,12 +192,6 @@ static void load_config() {
         } else if (section == "[notify]") {
             if (key == "mode")  g_config.notify_mode = val;
             else if (key == "primary") g_config.notify_primary = val;
-        } else if (section == "[http]") {
-            if (key == "proxy")  g_config.http_proxy = val;
-            else if (key == "resolve_timeout")  g_config.http_resolve_timeout  = parse_timeout_or(val, 300);
-            else if (key == "connect_timeout")  g_config.http_connect_timeout  = parse_timeout_or(val, 500);
-            else if (key == "send_timeout")     g_config.http_send_timeout     = parse_timeout_or(val, 500);
-            else if (key == "receive_timeout")  g_config.http_receive_timeout  = parse_timeout_or(val, 800);
         }
     }
 }
@@ -365,14 +325,9 @@ static void append_json_escaped(std::string& out, std::string_view s) {
 static bool http_post_json(const std::wstring& host, WORD port,
                            const std::wstring& path, bool use_ssl,
                            const std::string& json_body) {
-    load_config();
-    DWORD access_type = (g_config.http_proxy == "none")
-        ? WINHTTP_ACCESS_TYPE_NO_PROXY
-        : WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
-
     HINTERNET hSession = WinHttpOpen(
         L"ShutdownNotice/1.0",
-        access_type,
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return false;
@@ -394,10 +349,10 @@ static bool http_post_json(const std::wstring& host, WORD port,
     }
 
     WinHttpSetTimeouts(hRequest,
-                       g_config.http_resolve_timeout,
-                       g_config.http_connect_timeout,
-                       g_config.http_send_timeout,
-                       g_config.http_receive_timeout);
+                       HTTP_RESOLVE_TIMEOUT_MS,
+                       HTTP_CONNECT_TIMEOUT_MS,
+                       HTTP_SEND_TIMEOUT_MS,
+                       HTTP_RECEIVE_TIMEOUT_MS);
 
     const wchar_t* headers = L"Content-Type: application/json; charset=utf-8\r\n";
     DWORD header_len = static_cast<DWORD>(wcslen(headers));
