@@ -1,0 +1,47 @@
+name: Test install.ps1
+
+on:
+  push:
+    tags:
+      - 'v*'
+    paths:
+      - 'install.ps1'
+      - 'tests/test-install.ps1'
+      - '.github/workflows/test-install.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'install.ps1'
+      - 'tests/test-install.ps1'
+      - '.github/workflows/test-install.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: PS1 Script Sandbox (PowerShell ${{ matrix.pwsh_label }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pwsh_exe: powershell
+            pwsh_label: '5.1'
+          - pwsh_exe: pwsh
+            pwsh_label: '7'
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: '1'
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 显示 PowerShell 版本
+        shell: ${{ matrix.pwsh_exe }}
+        run: $PSVersionTable | Format-Table -AutoSize
+
+      - name: 运行测试
+        shell: ${{ matrix.pwsh_exe }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$env:GITHUB_WORKSPACE\tests\test-install.ps1"
