@@ -88,7 +88,7 @@ struct ConfigCache {
     // [serverchan]
     std::string serverchan_sendkey;
     // [dingtalk]
-    std::string dingtalk_webhook;
+    std::string dingtalk_access_token;
     std::string dingtalk_secret;
     // [notify]
     std::string notify_mode = "failover";            ///< primary_only | failover | both_sequential
@@ -113,22 +113,22 @@ static constexpr const char* CONFIG_TEMPLATE =
     "# 关机通知系统 - 配置文件\n"
     "# 支持同时配置多个通知渠道，任一渠道成功即视为推送成功\n"
     "\n"
-    "[serverchan]\n"
-    "# ServerChan 推送密钥\n"
-    "sendkey = \n"
-    "\n"
-    "[dingtalk]\n"
-    "# 钉钉机器人 Webhook\n"
-    "webhook = \n"
-    "\n"
-    "# 钉钉机器人加签密钥 (可选)，留空则不启用加签\n"
-    "secret = \n"
-    "\n"
     "[notify]\n"
     "# 通知策略: primary_only (仅主通道) / failover (主通道失败后备用) / both_sequential (串行双通道)\n"
     "mode = failover\n"
     "# 主通道: dingtalk / serverchan\n"
     "primary = dingtalk\n";
+    "\n"
+    "[serverchan]\n"
+    "# ServerChan 推送密钥\n"
+    "sendkey = \n"
+    "\n"
+    "[dingtalk]\n"
+    "# 钉钉机器人密钥\n"
+    "access_token = \n"
+    "\n"
+    "# 钉钉机器人加签密钥 (可选)，留空则不启用加签\n"
+    "secret = \n"
 
 
 /** 钉钉 Webhook 基础 URL */
@@ -188,11 +188,8 @@ static void load_config() {
         if (section == "[serverchan]" && key == "sendkey")
             g_config.serverchan_sendkey = val;
         else if (section == "[dingtalk]") {
-            if (key == "webhook" && !val.empty()) {
-                if (val.compare(0, 4, "http") != 0)
-                    g_config.dingtalk_webhook = DINGTALK_BASE_URL + val;
-                else
-                    g_config.dingtalk_webhook = val;
+            if (key == "access_token" && !val.empty()) {
+                g_config.dingtalk_access_token = val;
             } else if (key == "secret")
                 g_config.dingtalk_secret = val;
         } else if (section == "[notify]") {
@@ -618,21 +615,18 @@ bool send_serverchan_notify(const std::string& title,
 bool send_dingtalk_notify(const std::string& title,
                           const std::string& desp) {
     load_config();
-    const auto& webhook = g_config.dingtalk_webhook;
-    if (webhook.empty()) {
-        std::fprintf(stderr, "[钉钉] 未配置 webhook, 跳过\n");
+    const auto& access_token = g_config.dingtalk_access_token;
+    if (access_token.empty()) {
+        std::fprintf(stderr, "[钉钉] 未配置 access_token, 跳过\n");
         return false;
     }
 
-    std::string_view url_view = webhook;
-    bool use_ssl = false;
+    // 拼接完整 URL: https://oapi.dingtalk.com/robot/send?access_token=xxx
+    std::string full_url = DINGTALK_BASE_URL + access_token;
+    std::string_view url_view = full_url;
 
-    if (url_view.compare(0, 8, "https://") == 0) {
-        use_ssl = true;
-        url_view = url_view.substr(8);
-    } else if (url_view.compare(0, 7, "http://") == 0) {
-        url_view = url_view.substr(7);
-    }
+    // 解析 https:// 前缀
+    url_view = url_view.substr(8);  // skip "https://"
 
     auto slash_pos = url_view.find('/');
     std::string host, path;
@@ -676,10 +670,9 @@ bool send_dingtalk_notify(const std::string& title,
 
     std::wstring whost(host.begin(), host.end());
     std::wstring wpath(path.begin(), path.end());
-    WORD port = use_ssl ? INTERNET_DEFAULT_HTTPS_PORT
-                        : INTERNET_DEFAULT_HTTP_PORT;
 
-    return http_post_json(whost, port, wpath, use_ssl, json_body);
+    return http_post_json(whost, INTERNET_DEFAULT_HTTPS_PORT,
+                          wpath, true, json_body);
 }
 
 
@@ -688,7 +681,7 @@ void send_notify(const std::string& title, const std::string& desp) {
     load_config();
 
     const auto& mode = g_config.notify_mode;
-    const bool has_dingtalk = !g_config.dingtalk_webhook.empty();
+    const bool has_dingtalk = !g_config.dingtalk_access_token.empty();
     const bool has_serverchan = !get_sendkey().empty();
 
     // primary_only: 仅发主通道

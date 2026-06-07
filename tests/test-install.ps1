@@ -225,8 +225,8 @@ $configTemplate = @"
 sendkey = 
 
 [dingtalk]
-# 留空则不启用钉钉推送
-webhook = 
+# 钉钉机器人密钥
+access_token = 
 
 # 钉钉机器人加签密钥 (可选)
 secret = 
@@ -242,7 +242,7 @@ Assert-Contains "包含 [serverchan] 节" $configTemplate "[serverchan]"
 Assert-Contains "包含 [dingtalk] 节" $configTemplate "[dingtalk]"
 Assert-Contains "包含 [notify] 节" $configTemplate "[notify]"
 Assert-Contains "包含 sendkey" $configTemplate "sendkey"
-Assert-Contains "包含 webhook" $configTemplate "webhook"
+Assert-Contains "包含 access_token" $configTemplate "access_token"
 Assert-Contains "包含 secret" $configTemplate "secret"
 Assert-Contains "包含 mode 配置" $configTemplate "mode"
 Assert-Contains "包含 primary 配置" $configTemplate "primary"
@@ -254,11 +254,11 @@ Assert-NotContains "不应包含 ; 注释" $configTemplate ";"
 $lines = $configTemplate -split "`r`n|`n"
 Assert-True "至少有 8 行" ($lines.Count -ge 8)
 
-# sendkey / webhook / secret 默认值为空
+# sendkey / access_token / secret 默认值为空
 $sendkeyLine = $lines | Where-Object { $_ -match '^sendkey' }
 Assert-True "sendkey 默认空" ($sendkeyLine -match '=\s*$')
-$webhookLine = $lines | Where-Object { $_ -match '^webhook' }
-Assert-True "webhook 默认空" ($webhookLine -match '=\s*$')
+$accessTokenLine = $lines | Where-Object { $_ -match '^access_token' }
+Assert-True "access_token 默认空" ($accessTokenLine -match '=\s*$')
 
 # ============================================================
 # 测试 5: 边界条件
