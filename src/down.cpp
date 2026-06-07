@@ -4,7 +4,6 @@
 
 #include <cstdio>
 #include <ctime>
-#include <sstream>
 
 /**
  * down: 关机通知
@@ -26,14 +25,15 @@ int main() {
                    st.wHour, st.wMinute, st.wSecond);
 
         // 构建通知内容
-        std::ostringstream desp;
-        desp << "计算机 **"
-             << wide_to_utf8(std::wstring_view(computer_name))
-             << "** 于 **"
-             << wide_to_utf8(std::wstring_view(time_buf))
-             << "** 时进入关机程序";
+        std::string desp;
+        desp.reserve(128);
+        desp += "计算机 **";
+        desp += wide_to_utf8(std::wstring_view(computer_name));
+        desp += "** 于 **";
+        desp += wide_to_utf8(std::wstring_view(time_buf));
+        desp += "** 时进入关机程序";
 
-        send_notify("计算机正在关机", desp.str());
+        send_notify("计算机正在关机", desp);
         return 0;
     } catch (...) {
         return 1;

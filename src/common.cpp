@@ -532,12 +532,18 @@ int process_event_notify(unsigned long event_id,
         if (!query_latest_event(event_id, info)) return 1;
 
         // 构建 Markdown 格式的通知内容
-        std::ostringstream desp;
-        desp << "**" << event_label << "**  \n\n"
-             << "**时间**: " << wide_to_utf8(info.date) << "  \n\n"
-             << "**详情**: " << wide_to_utf8(info.desc);
+        std::string desp;
+        desp.reserve(256);
+        desp += "**";
+        desp += event_label;
+        desp += "**  \n\n";
+        desp += "**时间**: ";
+        desp += wide_to_utf8(info.date);
+        desp += "  \n\n";
+        desp += "**详情**: ";
+        desp += wide_to_utf8(info.desc);
 
-        send_notify(title, desp.str());
+        send_notify(title, desp);
         return 0;
     } catch (...) {
         return 1;
