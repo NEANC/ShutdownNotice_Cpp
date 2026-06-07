@@ -1,4 +1,4 @@
-name: Test install.ps1
+name: 沙盒测试 install.ps1
 
 on:
   push:

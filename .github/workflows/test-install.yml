@@ -1,0 +1,418 @@
+name: 测试 install.ps1
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'install.ps1'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/test-install-ci.yml'
+  pull_request:
+    paths:
+      - 'install.ps1'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/test-install-ci.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 构建 exe（一次性产物，供后续安装测试使用）
+  build:
+    name: 构建 exe
+    runs-on: windows-latest
+    outputs:
+      artifact_name: ${{ steps.upload.outputs.artifact_name || 'ShutdownNotice-CI' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配置 CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: 构建（全部 target，含 _dbg）
+        run: cmake --build build --config Release --parallel
+
+      - name: 上传构建产物
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShutdownNotice-CI
+          path: build/Release/*.exe
+          if-no-files-found: error
+
+  # 安装测试矩阵（PS 5.1 + PS 7）
+  test-install:
+    name: PS ${{ matrix.pwsh_label }}
+    needs: build
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pwsh_exe: powershell
+            pwsh_label: '5.1'
+          - pwsh_exe: pwsh
+            pwsh_label: '7'
+
+    defaults:
+      run:
+        shell: ${{ matrix.pwsh_exe }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. 下载构建产物
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: ShutdownNotice-CI
+          path: ci-install
+
+      - name: 确认产物
+        run: |
+          Write-Host "=== 构建产物 ==="
+          Get-ChildItem ci-install -Filter *.exe | ForEach-Object {
+              Write-Host "  $($_.Name): $('{0:N0}' -f $_.Length) bytes"
+          }
+
+      # 2. 生成 CI 适配版 install.ps1（跳过下载，用本地 exe）
+      - name: 生成 CI 安装脚本
+        run: |
+          $ciScript = @'
+          # CI 适配版 install.ps1 — 使用本地 exe，跳过 GitHub 下载
+          # 由 GitHub Actions 自动生成，勿手动编辑
+
+          param(
+              [string]$InstallPath = "C:\ShutdownNotice",
+              [switch]$Uninstall,
+              [switch]$RemoveFiles
+          )
+
+          $TaskFolder = "Shutdown Notice"
+
+          $EventTasks = @(
+              @{ ID = 41;   Name = "WIN告知：ID41";   Desc = "未进行正常关机流程的情况下重新启动" },
+              @{ ID = 1074; Name = "WIN告知：ID1074"; Desc = "因为系统关机、用户注销、应用程序崩溃，或者是由于系统资源不足等原因导致进程被强制结束" },
+              @{ ID = 6005; Name = "WIN告知：ID6005"; Desc = "事件日志服务已启动" },
+              @{ ID = 6006; Name = "WIN告知：ID6006"; Desc = "事件日志服务已停止" },
+              @{ ID = 6008; Name = "WIN告知：ID6008"; Desc = "上一次系统关闭是意外的" }
+          )
+
+          $TaskTemplate = @'
+          <?xml version="1.0" encoding="UTF-16"?>
+          <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+            <RegistrationInfo>
+              <Date>__TIME__</Date>
+              <Author>__AUTHOR__</Author>
+              <Description>__DESC__</Description>
+              <URI>\__FOLDER__\__NAME__</URI>
+            </RegistrationInfo>
+            <Triggers>
+              <EventTrigger>
+                <Enabled>true</Enabled>
+                <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[(EventID=__EVENTID__)]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+                <ValueQueries>
+                  <Value name="EventRecordID">Event/System/EventRecordID</Value>
+                  <Value name="SystemTime">Event/System/TimeCreated/@SystemTime</Value>
+                  <Value name="Computer">Event/System/Computer</Value>
+                  <Value name="Provider">Event/System/Provider/@Name</Value>
+                </ValueQueries>
+              </EventTrigger>
+            </Triggers>
+            <Principals>
+              <Principal id="Author">
+                <UserId>__USERID__</UserId>
+                <LogonType>S4U</LogonType>
+                <RunLevel>HighestAvailable</RunLevel>
+              </Principal>
+            </Principals>
+            <Settings>
+              <MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>
+              <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+              <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
+              <AllowHardTerminate>true</AllowHardTerminate>
+              <StartWhenAvailable>false</StartWhenAvailable>
+              <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+              <IdleSettings>
+                <StopOnIdleEnd>true</StopOnIdleEnd>
+                <RestartOnIdle>false</RestartOnIdle>
+              </IdleSettings>
+              <AllowStartOnDemand>true</AllowStartOnDemand>
+              <Enabled>true</Enabled>
+              <Hidden>false</Hidden>
+              <RunOnlyIfIdle>false</RunOnlyIfIdle>
+              <WakeToRun>false</WakeToRun>
+              <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+              <Priority>7</Priority>
+            </Settings>
+            <Actions Context="Author">
+              <Exec>
+                <Command>__EXEPATH__</Command>
+                <Arguments>--event-id __EVENTID__ --record "$(EventRecordID)" --time "$(SystemTime)" --computer "$(Computer)" --provider "$(Provider)"</Arguments>
+              </Exec>
+            </Actions>
+          </Task>
+          '@
+
+          function Write-Step { param($M) Write-Host ">>> $M" -ForegroundColor Cyan }
+          function Write-OK   { param($M) Write-Host "    [OK] $M" -ForegroundColor Green }
+          function Write-Err  { param($M) Write-Host "    [错误] $M" -ForegroundColor Red }
+          function Write-Warn { param($M) Write-Host "    [警告] $M" -ForegroundColor Yellow }
+
+          function Register-AllTasks {
+              Write-Step "注册计划任务..."
+
+              $null = schtasks /query /tn $TaskFolder 2>$null
+              if ($LASTEXITCODE -eq 0) {
+                  Write-Warn "任务文件夹 '$TaskFolder' 已存在，将覆盖同名任务"
+              }
+
+              foreach ($task in $EventTasks) {
+                  $exeName = "ID$($task.ID).exe"
+                  $exePath = Join-Path $InstallPath $exeName
+
+                  if (-not (Test-Path $exePath)) {
+                      Write-Warn "跳过 $($task.Name): 找不到 $exePath"
+                      continue
+                  }
+
+                  $taskFullName = "$TaskFolder\$($task.Name)"
+                  $xmlFile = Join-Path $env:TEMP "$($task.Name).xml"
+
+                  $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+                  $userId = $currentUser.User.Value
+                  $author = $currentUser.Name
+                  $timeStr = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
+
+                  $xml = $TaskTemplate.
+                      Replace("__TIME__", $timeStr).
+                      Replace("__AUTHOR__", $author).
+                      Replace("__DESC__", $task.Desc).
+                      Replace("__FOLDER__", $TaskFolder).
+                      Replace("__NAME__", $task.Name).
+                      Replace("__EVENTID__", [string]$task.ID).
+                      Replace("__USERID__", $userId).
+                      Replace("__EXEPATH__", $exePath)
+
+                  $utf16 = [System.Text.Encoding]::Unicode
+                  [System.IO.File]::WriteAllText($xmlFile, $xml, $utf16)
+
+                  try {
+                      $null = schtasks /create /tn $TaskFolder /f 2>$null
+                      $result = schtasks /create /tn $taskFullName /xml $xmlFile /f 2>&1
+                      if ($LASTEXITCODE -eq 0) {
+                          Write-OK "已注册: $taskFullName"
+                      } else {
+                          Write-Err "注册失败: $taskFullName — $result"
+                      }
+                  } finally {
+                      Remove-Item $xmlFile -Force -ErrorAction SilentlyContinue
+                  }
+              }
+          }
+
+          function Uninstall-ShutdownNotice {
+              Write-Step "卸载..."
+
+              foreach ($task in $EventTasks) {
+                  $taskFullName = "$TaskFolder\$($task.Name)"
+                  $null = schtasks /delete /tn $taskFullName /f 2>&1
+                  Write-OK "已删除: $taskFullName"
+              }
+
+              $null = schtasks /delete /tn $TaskFolder /f 2>$null
+
+              if ($RemoveFiles) {
+                  if (Test-Path $InstallPath) {
+                      Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction SilentlyContinue
+                      Write-OK "已删除目录: $InstallPath"
+                  }
+              }
+          }
+
+          # --- 主逻辑 ---
+          if ($Uninstall) {
+              Uninstall-ShutdownNotice
+              exit 0
+          }
+
+          # 安装: 创建目录并复制 exe
+          if (-not (Test-Path $InstallPath)) {
+              New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
+          }
+
+          Write-Step "复制 exe 到 $InstallPath"
+          $sourceDir = Join-Path $PSScriptRoot "ci-install"
+          Copy-Item "$sourceDir\*.exe" $InstallPath -Force
+          Get-ChildItem $InstallPath -Filter *.exe | ForEach-Object {
+              Write-OK "  $($_.Name)"
+          }
+
+          Register-AllTasks
+          '@
+
+          # 写入 CI 脚本
+          Set-Content -Path ci-install.ps1 -Value $ciScript -Encoding UTF8
+          Write-Host "[OK] CI 安装脚本已生成: ci-install.ps1"
+
+      # 3. 执行安装
+      - name: 执行安装
+        run: |
+          $installDir = "$env:RUNNER_TEMP\SN-Test"
+          Write-Host "安装目标: $installDir"
+          & "$env:GITHUB_WORKSPACE\ci-install.ps1" -InstallPath $installDir
+          if ($LASTEXITCODE -ne 0) { throw "安装失败" }
+
+      # 4. 验证计划任务
+      - name: 验证计划任务配置
+        run: |
+          Write-Host "=== 验证计划任务 ==="
+
+          $taskFolder = "Shutdown Notice"
+          $expectedTasks = @(
+              @{ Name = "WIN告知：ID41";   Exe = "ID41.exe" },
+              @{ Name = "WIN告知：ID1074"; Exe = "ID1074.exe" },
+              @{ Name = "WIN告知：ID6005"; Exe = "ID6005.exe" },
+              @{ Name = "WIN告知：ID6006"; Exe = "ID6006.exe" },
+              @{ Name = "WIN告知：ID6008"; Exe = "ID6008.exe" }
+          )
+
+          $errors = 0
+
+          foreach ($t in $expectedTasks) {
+              $fullName = "$taskFolder\$($t.Name)"
+              Write-Host "---"
+              Write-Host "检查: $fullName"
+
+              $info = schtasks /query /tn $fullName /v /fo list 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                  Write-Host "  [FAIL] 任务不存在: $fullName" -ForegroundColor Red
+                  $errors++
+                  continue
+              }
+
+              # 输出关键配置
+              $info | ForEach-Object {
+                  if ($_ -match "^(TaskName|Schedule Type|Status|Logon Mode|Run As User|Start In|Task To Run|Comment):") {
+                      Write-Host "  $_"
+                  }
+              }
+
+              # 验证 EventTrigger
+              $xmlInfo = schtasks /query /tn $fullName /xml 2>&1
+              if ($xmlInfo -match "<EventTrigger>") {
+                  Write-Host "  [OK] 包含 EventTrigger" -ForegroundColor Green
+              } else {
+                  Write-Host "  [FAIL] 缺少 EventTrigger" -ForegroundColor Red
+                  $errors++
+              }
+
+              if ($xmlInfo -match "EventID=$($t.Exe -replace 'ID(\d+)\.exe','$1')") {
+                  Write-Host "  [OK] EventID 正确" -ForegroundColor Green
+              } else {
+                  Write-Host "  [FAIL] EventID 不匹配" -ForegroundColor Red
+                  $errors++
+              }
+
+              if ($xmlInfo -match "<ValueQueries>") {
+                  Write-Host "  [OK] 包含 ValueQueries" -ForegroundColor Green
+              } else {
+                  Write-Host "  [FAIL] 缺少 ValueQueries" -ForegroundColor Red
+                  $errors++
+              }
+
+              if ($xmlInfo -match "Queue") {
+                  Write-Host "  [OK] MultipleInstancesPolicy = Queue" -ForegroundColor Green
+              } else {
+                  Write-Host "  [FAIL] MultipleInstancesPolicy 不是 Queue" -ForegroundColor Red
+                  $errors++
+              }
+
+              if ($info -match "Logon Mode:\s*S4U") {
+                  Write-Host "  [OK] LogonType = S4U" -ForegroundColor Green
+              } else {
+                  Write-Host "  [FAIL] LogonType 不是 S4U" -ForegroundColor Red
+                  $errors++
+              }
+          }
+
+          Write-Host ""
+          Write-Host "=== 验证结果 ==="
+          if ($errors -eq 0) {
+              Write-Host "全部 5 个任务配置正确" -ForegroundColor Green
+          } else {
+              Write-Host "$errors 个任务配置异常" -ForegroundColor Red
+              throw "计划任务验证失败"
+          }
+
+      # 5. 验证 Arguments 包含 --event-id / --time 等参数
+      - name: 验证任务参数
+        run: |
+          Write-Host "=== 验证 Exec Action 参数 ==="
+
+          $taskFolder = "Shutdown Notice"
+          $errors = 0
+
+          $xml = schtasks /query /tn "$taskFolder\WIN告知：ID1074" /xml 2>&1
+
+          if ($xml -notmatch "--event-id") {
+              Write-Host "[FAIL] 缺少 --event-id 参数" -ForegroundColor Red; $errors++
+          } else {
+              Write-Host "[OK] --event-id 参数存在" -ForegroundColor Green
+          }
+
+          if ($xml -notmatch '\$\(EventRecordID\)') {
+              Write-Host "[FAIL] 缺少 `$(EventRecordID)` 变量" -ForegroundColor Red; $errors++
+          } else {
+              Write-Host "[OK] `$(EventRecordID)` 变量存在" -ForegroundColor Green
+          }
+
+          if ($xml -notmatch '\$\(SystemTime\)') {
+              Write-Host "[FAIL] 缺少 `$(SystemTime)` 变量" -ForegroundColor Red; $errors++
+          } else {
+              Write-Host "[OK] `$(SystemTime)` 变量存在" -ForegroundColor Green
+          }
+
+          if ($xml -notmatch '\$\(Computer\)') {
+              Write-Host "[FAIL] 缺少 `$(Computer)` 变量" -ForegroundColor Red; $errors++
+          } else {
+              Write-Host "[OK] `$(Computer)` 变量存在" -ForegroundColor Green
+          }
+
+          if ($xml -notmatch '\$\(Provider\)') {
+              Write-Host "[FAIL] 缺少 `$(Provider)` 变量" -ForegroundColor Red; $errors++
+          } else {
+              Write-Host "[OK] `$(Provider)` 变量存在" -ForegroundColor Green
+          }
+
+          if ($errors -gt 0) {
+              throw "任务参数验证失败: $errors 处异常"
+          }
+          Write-Host ""
+          Write-Host "[OK] 所有参数验证通过" -ForegroundColor Green
+
+      # 6. 卸载清理
+      - name: 卸载清理
+        if: always()
+        run: |
+          Write-Host "=== 清理 ==="
+          $installDir = "$env:RUNNER_TEMP\SN-Test"
+          & "$env:GITHUB_WORKSPACE\ci-install.ps1" -Uninstall -RemoveFiles -InstallPath $installDir 2>&1
+          Write-Host "[OK] 清理完成"
+
+      # 7. 确认清理后无残留
+      - name: 确认无残留任务
+        if: always()
+        run: |
+          $folder = "Shutdown Notice"
+          $remaining = schtasks /query /tn $folder 2>&1
+          if ($LASTEXITCODE -eq 0) {
+              Write-Host "[WARN] 任务文件夹仍存在（可能非空）"
+              schtasks /query /tn $folder /fo list 2>&1 | Write-Host
+          } else {
+              Write-Host "[OK] 任务文件夹已完全清理"
+          }
