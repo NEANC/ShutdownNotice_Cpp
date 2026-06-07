@@ -150,7 +150,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          cp -f "assets/ShutdownNotice/"*.exe "release/" 2>/dev/null || true
+          for exe in assets/ShutdownNotice/*.exe; do
+            if [[ "$(basename "$exe")" != *_dbg.exe ]]; then
+              cp -f "$exe" release/
+            fi
+          done
           if [ -f "assets/changelog/CHANGELOG.md" ]; then
             cp -f "assets/changelog/CHANGELOG.md" "release/CHANGELOG.md"
           fi
