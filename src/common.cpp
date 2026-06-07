@@ -334,46 +334,88 @@ static constexpr const wchar_t* EVT_PROP_COMPUTER = L"Event/System/Computer";
 static constexpr const wchar_t* EVT_PROP_PROVIDER = L"Event/System/Provider/@Name";
 
 bool query_latest_event(unsigned long event_id, EventInfo& info) {
-    // 构建 XPath 查询
+    // 构建 XPath 查询，只匹配指定 EventID
     wchar_t query[256];
     swprintf_s(query, L"*[System[(EventID=%lu)]]", event_id);
 
+    // EvtQueryChannelPath: 通道路径模式 (非文件模式)
+    // EvtQueryReverseDirection: 结果从最新到最旧排列，配合 EvtNext(1) 直接取最新事件
     EVT_HANDLE hResults = EvtQuery(
         nullptr, EVENT_CHANNEL, query,
         EvtQueryChannelPath | EvtQueryReverseDirection);
-    if (!hResults) return false;
+    if (!hResults) {
+        std::fprintf(stderr, "[错误] EvtQuery 失败: GLE=%lu\n", GetLastError());
+        return false;
+    }
 
+    // 取最新一条事件 (Timeout=0ms, 立即返回)
     EVT_HANDLE hEvent = nullptr;
     DWORD dwReturned = 0;
     BOOL ok = EvtNext(hResults, 1, &hEvent, 0, 0, &dwReturned);
-    EvtClose(hResults);
+    DWORD evtNextErr = GetLastError();
+    EvtClose(hResults);  // 查询句柄仅在创建它的线程使用，用完立即释放
 
-    if (!ok || dwReturned == 0) return false;
+    if (!ok) {
+        // ERROR_NO_MORE_ITEMS: 无匹配事件 (正常)
+        // ERROR_TIMEOUT: 超时 (Timeout=0 时等同于无事件)
+        if (evtNextErr == ERROR_NO_MORE_ITEMS || evtNextErr == ERROR_TIMEOUT)
+            return false;
+        std::fprintf(stderr, "[错误] EvtNext 失败: GLE=%lu\n", evtNextErr);
+        return false;
+    }
+    if (dwReturned == 0) return false;
 
-    // 直接渲染指定属性值（避免全量 XML 序列化/解析开销）
+    // 通过 EvtCreateRenderContext + EvtRenderEventValues 只提取 3 个必要属性，
+    // 避免全量序列化/解析事件 XML。
+    // EvtSystemTimeCreated → EvtVarTypeFileTime (需转 FILETIME → 本地时间)
     const wchar_t* properties[] = {EVT_PROP_TIME, EVT_PROP_COMPUTER, EVT_PROP_PROVIDER};
     EVT_HANDLE hContext = EvtCreateRenderContext(3, properties, EvtRenderContextValues);
-
-    EVT_VARIANT values[3] = {};
-    if (hContext) {
-        DWORD used = 0, props = 0;
-        EvtRender(hContext, hEvent, EvtRenderEventValues,
-                  sizeof(values), values, &used, &props);
-        EvtClose(hContext);
+    if (!hContext) {
+        std::fprintf(stderr, "[错误] EvtCreateRenderContext 失败: GLE=%lu\n", GetLastError());
+        EvtClose(hEvent);
+        return false;
     }
 
-    // 提取时间 (FILETIME → 格式化字符串)
+    // 两段调用: 先传 NULL/0 获取所需缓冲区大小，再分配 vector<BYTE> 并填充
+    DWORD render_size = 0;
+    DWORD props = 0;
+    BOOL render_ok = EvtRender(hContext, hEvent, EvtRenderEventValues,
+                               0, nullptr, &render_size, &props);
+    if (!render_ok && GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+        std::fprintf(stderr, "[错误] EvtRender 获取缓冲区大小失败: GLE=%lu\n", GetLastError());
+        EvtClose(hContext);
+        EvtClose(hEvent);
+        return false;
+    }
+
+    std::vector<BYTE> render_buffer(render_size);
+    render_ok = EvtRender(hContext, hEvent, EvtRenderEventValues,
+                          render_size, render_buffer.data(), &render_size, &props);
+    EvtClose(hContext);
+    if (!render_ok || props < 3) {
+        std::fprintf(stderr, "[错误] EvtRender 渲染属性失败: GLE=%lu\n", GetLastError());
+        EvtClose(hEvent);
+        return false;
+    }
+
+    auto* values = reinterpret_cast<PEVT_VARIANT>(render_buffer.data());
+
+    // 提取时间 — EvtSystemTimeCreated 返回 EvtVarTypeFileTime (64-bit FILETIME)
     if (values[0].Type == EvtVarTypeFileTime && values[0].FileTimeVal) {
-        SYSTEMTIME st;
         FILETIME ft;
         ULONGLONG ft_val = values[0].FileTimeVal;
         ft.dwLowDateTime = static_cast<DWORD>(ft_val & 0xFFFFFFFF);
         ft.dwHighDateTime = static_cast<DWORD>(ft_val >> 32);
-        FileTimeToSystemTime(&ft, &st);
+
+        // UTC → 本地时间
+        SYSTEMTIME utc, local;
+        FileTimeToSystemTime(&ft, &utc);
+        SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local);
+
         wchar_t buf[32];
         swprintf_s(buf, L"%04d-%02d-%02d %02d:%02d:%02d",
-                   st.wYear, st.wMonth, st.wDay,
-                   st.wHour, st.wMinute, st.wSecond);
+                   local.wYear, local.wMonth, local.wDay,
+                   local.wHour, local.wMinute, local.wSecond);
         info.date = buf;
     }
 
@@ -388,38 +430,50 @@ bool query_latest_event(unsigned long event_id, EventInfo& info) {
         provider_name = values[2].StringVal;
     }
 
-    // 获取发布者句柄
+    // 获取发布者句柄 (用于 EvtFormatMessage 查找事件消息资源)
     EVT_HANDLE hPublisher = nullptr;
     if (!provider_name.empty()) {
         hPublisher = EvtOpenPublisherMetadata(
             nullptr, provider_name.c_str(), nullptr, 0, 0);
     }
 
-    // 格式化事件消息
+    // 两段调用: 先传 NULL 获取所需字符数，再分配 wstring 并填充
+    // BufferSize/BufferUsed 单位是字符数 (wchar_t)，不是字节数
     DWORD msg_size = 0;
     EvtFormatMessage(hPublisher, hEvent, 0, 0, nullptr,
                      EvtFormatMessageEvent, 0, nullptr, &msg_size);
 
     if (msg_size > 0) {
-        std::wstring msg_buffer(msg_size / sizeof(wchar_t), L'\0');
+        std::wstring msg_buffer(msg_size, L'\0');
         ok = EvtFormatMessage(
             hPublisher, hEvent, 0, 0, nullptr,
             EvtFormatMessageEvent, msg_size,
             msg_buffer.data(), &msg_size);
         if (ok) {
-            // 去掉尾部空行
+            // 去掉尾部空字符和空行
             while (!msg_buffer.empty() &&
-                   (msg_buffer.back() == L'\n' || msg_buffer.back() == L'\r')) {
+                   (msg_buffer.back() == L'\0' ||
+                    msg_buffer.back() == L'\n' ||
+                    msg_buffer.back() == L'\r')) {
                 msg_buffer.pop_back();
             }
             info.desc = std::move(msg_buffer);
         }
     }
 
+    // 释放所有资源 (EvtQuery/EvtNext/EvtCreateRenderContext/EvtOpenPublisherMetadata 句柄)
     if (hPublisher) EvtClose(hPublisher);
     EvtClose(hEvent);
     return !info.date.empty() || !info.desc.empty();
 }
+
+/*
+ * 性能关键路径总结:
+ *   EvtQueryReverseDirection  → 最新事件优先，O(1) 取首条
+ *   EvtNext(Timeout=0)        → 立即返回，不挂起等待
+ *   EvtRenderEventValues      → 只提取 3 个字段，避免 XML 序列化/解析
+ *   EvtFormatMessage 两段调用 → 一次分配到位，无重复拷贝
+ */
 
 bool send_serverchan_notify(const std::string& title,
                             const std::string& desp) {
