@@ -28,6 +28,12 @@ struct EventArgs {
 std::string wide_to_utf8(std::wstring_view wstr);
 
 /**
+ * 初始化调试控制台为 UTF-8 编码
+ * 仅在 SN_DEBUG_TIMING 定义时由调用点通过 #ifdef 控制调用
+ */
+void init_debug_console_utf8();
+
+/**
  * 诊断版本等待用户按键
  * 仅在 SN_DEBUG_TIMING 定义时生效，Release 版本为空操作
  */

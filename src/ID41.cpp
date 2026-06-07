@@ -3,8 +3,7 @@
 /** ID41: 未进行正常关机流程的情况下重新启动 */
 int wmain(int argc, wchar_t* argv[]) {
 #ifdef SN_DEBUG_TIMING
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
+    init_debug_console_utf8();
 #endif
 
     EventArgs args;

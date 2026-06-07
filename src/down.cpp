@@ -11,8 +11,7 @@
  */
 int main() {
 #ifdef SN_DEBUG_TIMING
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
+    init_debug_console_utf8();
 #endif
     try {
         // 获取计算机名

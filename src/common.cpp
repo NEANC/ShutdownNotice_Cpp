@@ -63,6 +63,12 @@ private:
 #define SN_TIMER(name) ((void)0)
 #endif
 
+/** 初始化调试控制台为 UTF-8 编码，确保 printf 中文正常显示 */
+void init_debug_console_utf8() {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+}
+
 /** 诊断版本等待用户按键。使用 WriteConsoleW 避免中文乱码 */
 void debug_wait_if_enabled() {
     // 首次调用时设置控制台 UTF-8 代码页，确保 printf 中文正常显示

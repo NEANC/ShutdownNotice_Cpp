@@ -3,8 +3,7 @@
 /** ID6006: 事件日志服务已停止 */
 int wmain(int argc, wchar_t* argv[]) {
 #ifdef SN_DEBUG_TIMING
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
+    init_debug_console_utf8();
 #endif
 
     EventArgs args;

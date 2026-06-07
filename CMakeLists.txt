@@ -45,14 +45,19 @@ target_compile_definitions(common_dbg PRIVATE SN_DEBUG_TIMING)
 # Release 优化选项
 # ============================================================
 if(MSVC)
-    foreach(lib IN ITEMS common common_dbg)
-        target_compile_options(${lib} PRIVATE
-            $<$<CONFIG:Release>:/O2>
-            $<$<CONFIG:Release>:/GL>
-            $<$<CONFIG:Release>:/Gy>
-            $<$<CONFIG:Release>:/Gw>
-        )
-    endforeach()
+    # common: 正式版全优化
+    target_compile_options(common PRIVATE
+        $<$<CONFIG:Release>:/O2>
+        $<$<CONFIG:Release>:/GL>
+        $<$<CONFIG:Release>:/Gy>
+        $<$<CONFIG:Release>:/Gw>
+    )
+    # common_dbg: 诊断版仅 /O2，不加 /GL 避免 _dbg 目标 LTCG 警告
+    target_compile_options(common_dbg PRIVATE
+        $<$<CONFIG:Release>:/O2>
+        $<$<CONFIG:Release>:/Gy>
+        $<$<CONFIG:Release>:/Gw>
+    )
 endif()
 
 # ============================================================
