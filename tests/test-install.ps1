@@ -96,7 +96,7 @@ Assert-True "AST 解析成功" ($ast -ne $null)
 
 # 验证必要的函数定义
 $funcNames = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | ForEach-Object { $_.Name }
-$requiredFuncs = @("Main", "Invoke-Download", "New-EventTask", "Register-AllTasks", "New-ConfigTemplate", "Get-LatestRelease")
+$requiredFuncs = @("Main", "Invoke-Download", "New-EventTask", "Register-AllTasks", "New-ConfigTemplate", "Get-LatestRelease", "Uninstall-ShutdownNotice")
 foreach ($f in $requiredFuncs) {
     Assert-True "函数 $f 已定义" ($funcNames -contains $f)
 }
@@ -345,7 +345,9 @@ if ($paramBlock) {
     Assert-True "包含 Repo 参数" ($paramNames -contains "Repo")
     Assert-True "包含 Tag 参数" ($paramNames -contains "Tag")
     Assert-True "包含 Token 参数" ($paramNames -contains "Token")
-    Assert-Equal "参数数量" 4 $paramBlock.Parameters.Count
+    Assert-True "包含 Uninstall 参数" ($paramNames -contains "Uninstall")
+    Assert-True "包含 RemoveFiles 参数" ($paramNames -contains "RemoveFiles")
+    Assert-Equal "参数数量" 6 $paramBlock.Parameters.Count
 }
 
 # ============================================================

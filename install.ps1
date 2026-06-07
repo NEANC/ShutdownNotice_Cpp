@@ -13,10 +13,18 @@
     指定下载版本标签（如 v1.0.0）。留空则下载最新 Release。
 .PARAMETER Token
     GitHub Personal Access Token（可选）。用于避免 API 速率限制。
+.PARAMETER Uninstall
+    卸载模式：移除所有计划任务，可选删除安装目录。
+.PARAMETER RemoveFiles
+    与 -Uninstall 配合使用，同时删除安装目录下的所有文件。
 .EXAMPLE
     .\install.ps1
 .EXAMPLE
     .\install.ps1 -InstallPath "D:\Tools\Shutdown Notice" -Tag "v1.0.0"
+.EXAMPLE
+    .\install.ps1 -Uninstall
+.EXAMPLE
+    .\install.ps1 -Uninstall -RemoveFiles
 .NOTES
     必须以管理员身份运行。
 #>
@@ -25,7 +33,9 @@ param(
     [string]$InstallPath = "C:\Shutdown Notice",
     [string]$Repo = "NEANC/ShutdownNotice_Cpp",
     [string]$Tag = "",
-    [string]$Token = ""
+    [string]$Token = "",
+    [switch]$Uninstall,
+    [switch]$RemoveFiles
 )
 
 
@@ -299,8 +309,70 @@ ack_mode = response_header
 }
 
 
+# 卸载
+function Uninstall-ShutdownNotice {
+    Write-Step "卸载 Shutdown Notice..."
+
+    $removedCount = 0
+    foreach ($task in $Script:EventTasks) {
+        $taskFullName = "$TaskFolder\$($task.Name)"
+        $result = schtasks /delete /tn $taskFullName /f 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "已删除任务: $taskFullName"
+            $removedCount++
+        } else {
+            Write-Warn "任务不存在或删除失败: $taskFullName"
+        }
+    }
+
+    # 尝试删除任务文件夹（如果已空）
+    $null = schtasks /delete /tn $TaskFolder /f 2>$null
+
+    Write-OK "已移除 $removedCount 个计划任务"
+
+    if ($RemoveFiles) {
+        if (Test-Path $InstallPath) {
+            Write-Step "删除安装目录: $InstallPath"
+            try {
+                Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
+                Write-OK "已删除安装目录"
+            } catch {
+                Write-Err "删除安装目录失败: $_"
+            }
+        } else {
+            Write-Warn "安装目录不存在: $InstallPath"
+        }
+    } else {
+        Write-Host "    提示: 使用 -RemoveFiles 同时删除安装目录" -ForegroundColor Gray
+        Write-Host "    安装目录: $InstallPath" -ForegroundColor Gray
+    }
+}
+
+
 # 主流程
 function Main {
+    if ($Uninstall) {
+        Write-Host ""
+        Write-Host "  Shutdown Notice 卸载脚本" -ForegroundColor Magenta
+        Write-Host "----------------------------------------" -ForegroundColor Magenta
+        if ($RemoveFiles) {
+            Write-Host "  模式: 完整卸载（任务 + 文件）" -ForegroundColor Yellow
+        } else {
+            Write-Host "  模式: 仅移除计划任务" -ForegroundColor Yellow
+        }
+        Write-Host "  安装路径: $InstallPath" -ForegroundColor Gray
+        Write-Host "----------------------------------------" -ForegroundColor Magenta
+        Write-Host ""
+
+        Uninstall-ShutdownNotice
+
+        Write-Host ""
+        Write-Host "  卸载完成！" -ForegroundColor Green
+        Write-Host "----------------------------------------" -ForegroundColor Magenta
+        Write-Host ""
+        return
+    }
+
     Write-Host ""
     Write-Host "  Shutdown Notice 安装脚本" -ForegroundColor Magenta
     Write-Host "----------------------------------------" -ForegroundColor Magenta
