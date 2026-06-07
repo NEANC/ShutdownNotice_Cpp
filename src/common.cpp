@@ -54,12 +54,10 @@ private:
 #define SN_TIMER(name) ((void)0)
 #endif
 
-/** 诊断版本等待用户按键。Release 版本为空操作，不阻塞退出 */
+/** 诊断版本等待用户按键。Release 版本仅在调用点用 #ifdef 排除 */
 void debug_wait_if_enabled() {
-#ifdef SN_DEBUG_TIMING
     std::fprintf(stderr, "\n[诊断] 按 Enter 键退出...");
     std::getchar();
-#endif
 }
 
 

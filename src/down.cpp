@@ -34,10 +34,14 @@ int main() {
         desp += "** 时进入关机程序";
 
         send_notify("计算机正在关机", desp);
+#ifdef SN_DEBUG_TIMING
         debug_wait_if_enabled();
+#endif
         return 0;
     } catch (...) {
+#ifdef SN_DEBUG_TIMING
         debug_wait_if_enabled();
+#endif
         return 1;
     }
 }
