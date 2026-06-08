@@ -3,3 +3,7 @@
 
 # 其他文本文件统一 LF
 * text=auto eol=lf
+*.cpp text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.xml text eol=crlf
