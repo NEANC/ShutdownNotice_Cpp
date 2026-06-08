@@ -204,7 +204,7 @@ function Get-LatestRelease {
     }
     $url = "https://api.github.com/$apiPath"
 
-    Write-Step "查询 GitHub Release: $url"
+    Write-Step "正在通过 GitHub API 查询对应版本 Release"
     try {
         $release = Invoke-RestMethod -Uri $url -Headers $headers -ErrorAction Stop
         Write-OK "找到版本: $($release.tag_name)"
@@ -217,7 +217,7 @@ function Get-LatestRelease {
 }
 
 function Invoke-Download {
-    Write-Step "下载构建产物..."
+    Write-Step "下载构建产物"
 
     $release = Get-LatestRelease
     if (-not $release -or -not $release.assets) {
@@ -256,11 +256,11 @@ function Invoke-Download {
             $expected = $matches[1]
             $actual = Get-FileSha256 -FilePath $dest
             if ($actual -eq $expected) {
-                Write-OK "已保存并校验通过: $dest"
+                Write-OK "校验通过: $dest"
             } else {
                 Write-Err "SHA256 校验失败: $($asset.name)"
-                Write-Err "  期望: $expected"
-                Write-Err "  实际: $actual"
+                Write-Err "  云端: $expected"
+                Write-Err "  本地: $actual"
                 Remove-Item $dest -Force -ErrorAction SilentlyContinue
             }
         } else {
@@ -321,7 +321,7 @@ function New-EventTask {
 }
 
 function Register-AllTasks {
-    Write-Step "注册计划任务..."
+    Write-Step "注册计划任务"
 
     # 检查任务文件夹是否已存在（首次安装必然失败，用 cmd.exe 隔离）
     cmd.exe /c "schtasks /query /tn `"$TaskFolder`" >nul 2>nul"
@@ -393,7 +393,7 @@ ack_mode = response_header
 
 # 卸载
 function Uninstall-ShutdownNotice {
-    Write-Step "卸载 Shutdown Notice..."
+    Write-Step "卸载 Shutdown Notice"
 
     $removedCount = 0
     foreach ($task in $Script:EventTasks) {
