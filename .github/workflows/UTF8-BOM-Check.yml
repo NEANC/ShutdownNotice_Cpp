@@ -139,56 +139,77 @@ jobs:
           failure() &&
           steps.check.outcome == 'failure' &&
           github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           echo "::warning file=install-core.ps1,title=Invalid file encoding::install-core.ps1 must be saved as UTF-8 with BOM and CRLF line endings"
           echo ""
           echo "Fix command:"
           echo "  python fix_normalize_line_endings.py"
 
-          marker="<!-- install-core-format-diagnostic -->"
-          comment_file="$(mktemp)"
+      - name: Push PR Diagnostic Report
+        if: |
+          failure() &&
+          steps.check.outcome == 'failure' &&
+          github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const pr = context.payload.pull_request;
 
-          cat > "$comment_file" <<'EOF'
-          <!-- install-core-format-diagnostic -->
-          ## PR Diagnostic Report / PR 诊断报告
+            if (!pr) {
+              core.info('Not a pull_request event, skip PR diagnostic report.');
+              return;
+            }
 
-          ⚠️ The file `install-core.ps1` does not meet the required format.  
-          ⚠️ `install-core.ps1` 文件格式不符合要求。
+            const marker = '<!-- install-core-format-diagnostic -->';
 
-          **Requirements / 格式要求:**
+            const body = `${marker}
+            ## PR Diagnostic Report / PR 诊断报告
 
-          - UTF-8 with BOM
-          - CRLF line endings
+            ⚠️ The file \`install-core.ps1\` does not meet the required format.  
+            ⚠️ \`install-core.ps1\` 文件格式不符合要求。
 
-          **Fix command / 修复命令:**
+            **Requirements / 格式要求:**
 
-          ```bash
-          python fix_normalize_line_endings.py
-          ```
+            - UTF-8 with BOM
+            - CRLF line endings
 
-          Please run the command above and push the changes again.  
-          请运行上述命令后重新提交。
-          EOF
+            **Fix command / 修复命令:**
 
-          comment_id="$(
-            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              --jq ".[] | select(.user.type == \"Bot\" and (.body | contains(\"${marker}\"))) | .id" \
-              | head -n 1
-          )"
+            \`\`\`bash
+            python fix_normalize_line_endings.py
+            \`\`\`
 
-          if [ -n "$comment_id" ]; then
-            gh api \
-              --method PATCH \
-              "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
-              --field body="$(cat "$comment_file")"
-          else
-            gh api \
-              --method POST \
-              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              --field body="$(cat "$comment_file")"
-          fi
+            Please run the command above and push the changes again.  
+            请运行上述命令后重新提交。
+            `;
 
-          exit 1
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number
+            });
+
+            const previousComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes(marker)
+            );
+
+            if (previousComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: previousComment.id,
+                body
+              });
+
+              core.info(`Updated existing PR diagnostic comment: ${previousComment.id}`);
+            } else {
+              const { data: createdComment } = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body
+              });
+
+              core.info(`Created PR diagnostic comment: ${createdComment.id}`);
+            }
