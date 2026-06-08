@@ -225,8 +225,9 @@ function New-EventTask {
     [System.IO.File]::WriteAllText($xmlFile, $xml, $utf16)
 
     try {
-        # 创建任务文件夹
-        $null = schtasks /create /tn $TaskFolder /f 2>$null
+        # 创建任务文件夹（预期可能失败，用 cmd.exe 隔离）
+        cmd.exe /c "schtasks /create /tn `"$TaskFolder`" /f >nul 2>nul"
+        $null = $LASTEXITCODE
 
         # 注册任务
         $result = schtasks /create /tn $taskFullName /xml $xmlFile /f 2>&1
@@ -243,8 +244,10 @@ function New-EventTask {
 function Register-AllTasks {
     Write-Step "注册计划任务..."
 
-    $null = schtasks /query /tn $TaskFolder 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    # 检查任务文件夹是否已存在（首次安装必然失败，用 cmd.exe 隔离）
+    cmd.exe /c "schtasks /query /tn `"$TaskFolder`" >nul 2>nul"
+    $folderExists = ($LASTEXITCODE -eq 0)
+    if ($folderExists) {
         Write-Warn "任务文件夹 '$TaskFolder' 已存在，将覆盖同名任务"
     }
 
@@ -316,8 +319,9 @@ function Uninstall-ShutdownNotice {
     $removedCount = 0
     foreach ($task in $Script:EventTasks) {
         $taskFullName = "$TaskFolder\$($task.Name)"
-        $result = schtasks /delete /tn $taskFullName /f 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        cmd.exe /c "schtasks /delete /tn `"$taskFullName`" /f >nul 2>nul"
+        $delExit = $LASTEXITCODE
+        if ($delExit -eq 0) {
             Write-OK "已删除任务: $taskFullName"
             $removedCount++
         } else {
@@ -326,7 +330,8 @@ function Uninstall-ShutdownNotice {
     }
 
     # 尝试删除任务文件夹（如果已空）
-    $null = schtasks /delete /tn $TaskFolder /f 2>$null
+    cmd.exe /c "schtasks /delete /tn `"$TaskFolder`" /f >nul 2>nul"
+    $null = $LASTEXITCODE
 
     Write-OK "已移除 $removedCount 个计划任务"
 
