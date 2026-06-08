@@ -102,17 +102,19 @@ Assert-True "install.ps1 含 Test-SNTrue" ($funcNames -contains "Test-SNTrue")
 Write-Host ""
 Write-Host "--- install-core.ps1 ---"
 $coreContent = Get-Content -Path $Script:CorePath -Raw -Encoding UTF8
-$coreTestable = $coreContent -replace '#Requires -RunAsAdministrator', '# Requires removed for CI test'
-$parsed2 = $null
-try {
-    $parsed2 = [ScriptBlock]::Create($coreTestable)
+# 移除可能的 BOM 字符 (PS 5.1 Get-Content 可能保留 BOM)
+if ($coreContent[0] -eq [char]0xFEFF) { $coreContent = $coreContent.Substring(1) }
+# 使用 Parser::ParseInput 做纯语法解析（避免 [ScriptBlock]::Create 限制）
+$tokens = $null
+$parseErrors = $null
+$ast2 = [System.Management.Automation.Language.Parser]::ParseInput($coreContent, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count -eq 0) {
     Assert-True "install-core.ps1 语法有效" $true
-} catch {
+} else {
     Assert-True "install-core.ps1 语法有效" $false
-    Write-Host "        解析错误: $_" -ForegroundColor Red
+    foreach ($e in $parseErrors) { Write-Host "        解析错误: $($e.Message)" -ForegroundColor Red }
     exit 1
 }
-$ast2 = $parsed2.Ast
 Assert-True "install-core.ps1 AST 解析成功" ($ast2 -ne $null)
 $funcNames2 = $ast2.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | ForEach-Object { $_.Name }
 $requiredFuncs = @("Main", "Invoke-Download", "New-EventTask", "Register-AllTasks", "New-ConfigTemplate", "Get-LatestRelease", "Uninstall-ShutdownNotice")

@@ -1,29 +1,5 @@
-# Shutdown Notice - IEX bootstrap installer
-#
-# Usage:
-#   Install (default):
-#     irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
-#
-#   Custom path:
-#     $SN_INSTALL_PATH='D:\Tools\Shutdown Notice'; irm https://raw.../install.ps1 | iex
-#
-#   Specific version:
-#     $SN_TAG='v0.1.0'; irm https://raw.../install.ps1 | iex
-#
-#   Uninstall (tasks only):
-#     $SN_UNINSTALL=$true; irm https://raw.../install.ps1 | iex
-#
-#   Full uninstall (tasks + files):
-#     $SN_UNINSTALL=$true; $SN_REMOVE_FILES=$true; irm https://raw.../install.ps1 | iex
-#
-# Available variables (all optional):
-#   $SN_INSTALL_PATH  - Install directory (default "C:\Shutdown Notice")
-#   $SN_TAG           - Release tag (default Latest)
-#   $SN_REPO          - GitHub repo (default "NEANC/ShutdownNotice_Cpp")
-#   $SN_BRANCH        - Branch (default "master")
-#   $SN_TOKEN         - GitHub PAT (optional)
-#   $SN_UNINSTALL     - Uninstall mode ($true = uninstall)
-#   $SN_REMOVE_FILES  - Delete install dir during uninstall
+# Shutdown Notice IEX bootstrap - irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
+# $SN_INSTALL_PATH='D:\Tools'; $SN_TAG='v0.1.0'; $SN_UNINSTALL=$true; $SN_REMOVE_FILES=$true
 
 $ErrorActionPreference = 'Stop'
 
@@ -70,8 +46,11 @@ $client = New-Object Net.WebClient
 $bytes = $client.DownloadData($coreUrl)
 $code = [System.Text.Encoding]::UTF8.GetString($bytes)
 
-# Normalize CR-only line endings
-$code = $code -replace "`r(?!`n)", "`r`n"
+# Strip BOM character preserved by GetString (otherwise WriteAllText adds second BOM)
+$code = $code -replace "^\uFEFF", ""
+
+# Normalize all line endings to CRLF (fix CR-only / LF-only / mixed)
+$code = $code -replace "(`r`n|`n|`r)", "`r`n"
 
 # Write UTF-8 with BOM for Windows PowerShell 5.1 compatibility
 $utf8Bom = New-Object System.Text.UTF8Encoding($true)

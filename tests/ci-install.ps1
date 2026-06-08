@@ -1,4 +1,4 @@
-﻿# CI 适配版 install.ps1 — 使用本地 exe，跳过 GitHub 下载
+﻿﻿# CI 适配版 install.ps1 — 使用本地 exe，跳过 GitHub 下载
 # 用于 test-install.yml，与正式 install.ps1 共享相同 XML 任务模板
 
 param(
