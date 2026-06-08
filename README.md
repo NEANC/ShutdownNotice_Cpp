@@ -57,6 +57,12 @@ Windows 系统事件日志监控与通知工具，通过 Server酱 / 钉钉机�
 irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
 ```
 
+### 使用国内源
+
+```powershell
+$SN_MIRROR='ghfast.top'; irm https://ghfast.top/https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
+```
+
 ### 自定义安装路径
 
 ```powershell
@@ -73,6 +79,9 @@ $SN_TAG='v0.1.0'; irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp
 
 ```powershell
 $SN_INSTALL_PATH='D:\Tools\SN'; $SN_TAG='v0.1.0'; irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
+
+# 国内源
+$SN_MIRROR='ghfast.top'; $SN_INSTALL_PATH='D:\Tools\SN'; $SN_TAG='v0.1.0';  irm https://ghfast.top/https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
 ```
 
 ### 卸载
