@@ -1,35 +1,33 @@
-﻿# Shutdown Notice - IEX bootstrap installer
+# Shutdown Notice - IEX bootstrap installer
 #
-# 用法:
-#   一键安装:
+# Usage:
+#   Install (default):
 #     irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
 #
-#   自定义安装路径:
+#   Custom path:
 #     $SN_INSTALL_PATH='D:\Tools\Shutdown Notice'; irm https://raw.../install.ps1 | iex
 #
-#   指定版本:
+#   Specific version:
 #     $SN_TAG='v0.1.0'; irm https://raw.../install.ps1 | iex
 #
-#   卸载 (仅任务):
+#   Uninstall (tasks only):
 #     $SN_UNINSTALL=$true; irm https://raw.../install.ps1 | iex
 #
-#   完整卸载 (任务+文件):
+#   Full uninstall (tasks + files):
 #     $SN_UNINSTALL=$true; $SN_REMOVE_FILES=$true; irm https://raw.../install.ps1 | iex
 #
-# 环境变量 (所有均为可选):
-#   $SN_INSTALL_PATH  - 安装目录, 默认 "C:\Shutdown Notice"
-#   $SN_TAG           - 指定版本标签, 默认 Latest
-#   $SN_REPO          - GitHub 仓库, 默认 "NEANC/ShutdownNotice_Cpp"
-#   $SN_BRANCH        - 分支, 默认 "master"
-#   $SN_TOKEN         - GitHub PAT (可选)
-#   $SN_UNINSTALL     - 卸载模式 ($true=卸载)
-#   $SN_REMOVE_FILES  - 配合卸载, $true=删除安装目录
+# Available variables (all optional):
+#   $SN_INSTALL_PATH  - Install directory (default "C:\Shutdown Notice")
+#   $SN_TAG           - Release tag (default Latest)
+#   $SN_REPO          - GitHub repo (default "NEANC/ShutdownNotice_Cpp")
+#   $SN_BRANCH        - Branch (default "master")
+#   $SN_TOKEN         - GitHub PAT (optional)
+#   $SN_UNINSTALL     - Uninstall mode ($true = uninstall)
+#   $SN_REMOVE_FILES  - Delete install dir during uninstall
 
 $ErrorActionPreference = 'Stop'
 
-# ------------------------------------------------------------
-# 辅助: 读取 $SN_* 变量, 优先级: 当前作用域 > 环境变量 > 默认值
-# ------------------------------------------------------------
+# Resolve $SN_* variable: current scope > environment > default
 function Get-SNValue {
     param([string]$Name, [object]$DefaultValue = $null)
     $var = Get-Variable -Name $Name -ErrorAction SilentlyContinue
@@ -48,46 +46,38 @@ function Test-SNTrue {
     return "$value" -match '^(1|true|yes|y)$'
 }
 
-# ------------------------------------------------------------
-# 基础环境设置
-# ------------------------------------------------------------
+# Bootstrap environment
 try { Set-ExecutionPolicy -Scope Process Bypass -Force -ErrorAction SilentlyContinue } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-# ------------------------------------------------------------
-# 管理员权限检查
-# ------------------------------------------------------------
+# Admin check
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw '请使用管理员身份运行 PowerShell 并重新执行安装命令。'
+    throw 'Please run as Administrator.'
 }
 
-# ------------------------------------------------------------
-# 解析参数
-# ------------------------------------------------------------
+# Download install-core.ps1
 $repo   = Get-SNValue -Name 'SN_REPO'   -DefaultValue 'NEANC/ShutdownNotice_Cpp'
 $branch = Get-SNValue -Name 'SN_BRANCH' -DefaultValue 'master'
 $coreUrl = "https://raw.githubusercontent.com/$repo/$branch/install-core.ps1"
 $tmp = Join-Path $env:TEMP 'ShutdownNotice-install-core.ps1'
 
-Write-Host ">>> 下载安装脚本..."
+Write-Host ">>> Downloading install-core.ps1..."
 Write-Host "    $coreUrl"
 
 $client = New-Object Net.WebClient
 $bytes = $client.DownloadData($coreUrl)
 $code = [System.Text.Encoding]::UTF8.GetString($bytes)
 
-# 兼容 CR-only 行尾
+# Normalize CR-only line endings
 $code = $code -replace "`r(?!`n)", "`r`n"
 
-# Windows PowerShell 5.1: 写入 UTF-8 with BOM
+# Write UTF-8 with BOM for Windows PowerShell 5.1 compatibility
 $utf8Bom = New-Object System.Text.UTF8Encoding($true)
 [System.IO.File]::WriteAllText($tmp, $code, $utf8Bom)
 
-# ------------------------------------------------------------
-# 构建参数表并执行 install-core.ps1
-# ------------------------------------------------------------
+# Build splat table and execute install-core.ps1
 $params = @{}
 $installPath = Get-SNValue -Name 'SN_INSTALL_PATH' -DefaultValue $null
 if ($installPath) { $params['InstallPath'] = $installPath }
@@ -98,5 +88,5 @@ if ($token) { $params['Token'] = $token }
 if (Test-SNTrue -Name 'SN_UNINSTALL')    { $params['Uninstall']    = $true }
 if (Test-SNTrue -Name 'SN_REMOVE_FILES') { $params['RemoveFiles']  = $true }
 
-Write-Host ">>> 执行安装脚本..."
+Write-Host ">>> Executing install-core.ps1..."
 & $tmp @params
