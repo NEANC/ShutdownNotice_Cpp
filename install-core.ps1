@@ -132,6 +132,18 @@ function Write-Warn {
     Write-Host "    [警告] $Message" -ForegroundColor Yellow
 }
 
+# 计算文件 SHA256 哈希
+function Get-FileSha256 {
+    param([string]$FilePath)
+    try {
+        $hash = (Get-FileHash -Path $FilePath -Algorithm SHA256 -ErrorAction Stop).Hash
+        return $hash.ToLowerInvariant()
+    } catch {
+        Write-Err "无法计算文件哈希: $FilePath — $_"
+        return $null
+    }
+}
+
 # 镜像 URL 包装（国内加速用，如 ghfast.top）
 function Get-MirroredUrl {
     param([string]$Url, [string]$MirrorHost)
@@ -190,7 +202,7 @@ function Get-LatestRelease {
     } else {
         $apiPath = "repos/$Repo/releases/latest"
     }
-    $url = Get-MirroredUrl -Url "https://api.github.com/$apiPath" -MirrorHost $Mirror
+    $url = "https://api.github.com/$apiPath"
 
     Write-Step "查询 GitHub Release: $url"
     try {
@@ -233,10 +245,26 @@ function Invoke-Download {
         $dest = Join-Path $InstallPath $asset.name
         Write-Host "    下载: $($asset.name) ($('{0:N0}' -f $asset.size) bytes)"
         $success = Invoke-DownloadWithRetry -Url $asset.browser_download_url -OutFile $dest -Headers $headers -MirrorHost $Mirror
-        if ($success) {
-            Write-OK "已保存: $dest"
-        } else {
+        if (-not $success) {
             Write-Err "下载失败: $($asset.name)"
+            continue
+        }
+
+        # SHA256 完整性校验（利用 GitHub API 返回的 digest 字段）
+        $expectedDigest = $asset.digest
+        if ($expectedDigest -and $expectedDigest -match '^sha256:([0-9a-fA-F]{64})$') {
+            $expected = $matches[1]
+            $actual = Get-FileSha256 -FilePath $dest
+            if ($actual -eq $expected) {
+                Write-OK "已保存并校验通过: $dest"
+            } else {
+                Write-Err "SHA256 校验失败: $($asset.name)"
+                Write-Err "  期望: $expected"
+                Write-Err "  实际: $actual"
+                Remove-Item $dest -Force -ErrorAction SilentlyContinue
+            }
+        } else {
+            Write-OK "已保存: $dest"
         }
     }
 }
