@@ -1,0 +1,95 @@
+name: UTF8-BOM 检查
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'install-core.ps1'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'install-core.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  normalize-ps1:
+    name: 规范化 BOM 与换行符
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 规范化 install-core.ps1
+        run: |
+          set -euo pipefail
+
+          python3 -c "
+          import sys
+          path = 'install-core.ps1'
+          with open(path, 'rb') as f:
+              data = f.read()
+
+          BOM = b'\xEF\xBB\xBF'
+
+          # 1. 剥离所有重复 BOM
+          bom_count = 0
+          while data.startswith(BOM):
+              bom_count += 1
+              data = data[len(BOM):]
+
+          # 2. 统一换行为 CRLF
+          data = data.replace(b'\r\n', b'\n').replace(b'\r', b'\n').replace(b'\n', b'\r\n')
+
+          # 3. 写回单 BOM + 内容
+          with open(path, 'wb') as f:
+              f.write(BOM + data)
+
+          print(f'{path}: stripped {bom_count} BOM(s), normalized line endings')
+          "
+
+          # 检查是否有文件被修改
+          if git diff --quiet; then
+            echo "install-core.ps1 already normalized."
+            exit 0
+          fi
+
+          echo ""
+          echo "=== 变更的文件 ==="
+          git diff --stat
+
+      - name: 自动提交修复
+        if: github.event_name != 'pull_request'
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add install-core.ps1
+          git commit -m "auto: 规范化 install-core.ps1 BOM 与换行符"
+
+          # 拉取最新避免冲突
+          git pull --rebase origin master
+          git push origin master
+          echo "[OK] 已自动推送到 master"
+
+      - name: PR 诊断（仅报告，不提交）
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --quiet; then
+            echo "[OK] install-core.ps1 格式正常"
+            exit 0
+          fi
+
+          echo "::warning::install-core.ps1 BOM 或换行符异常，请本地修复后重新提交"
+          echo ""
+          echo "修复命令:"
+          echo '  python _fix_requires.py'
+          exit 1
