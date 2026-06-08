@@ -33,30 +33,65 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     throw 'Please run as Administrator.'
 }
 
-# Download install-core.ps1
+# Download install-core.ps1 (镜像失败/缓存过期时自动 fallback 直连)
 $repo   = Get-SNValue -Name 'SN_REPO'   -DefaultValue 'NEANC/ShutdownNotice_Cpp'
 $branch = Get-SNValue -Name 'SN_BRANCH' -DefaultValue 'master'
 $mirror = Get-SNValue -Name 'SN_MIRROR' -DefaultValue ''
 $baseUrl = "https://raw.githubusercontent.com/$repo/$branch/install-core.ps1"
-$coreUrl = if ($mirror) { "https://$mirror/$baseUrl" } else { $baseUrl }
 $tmp = Join-Path $env:TEMP 'ShutdownNotice-install-core.ps1'
 
-Write-Host ">>> Downloading install-core.ps1..."
-Write-Host "    $coreUrl"
+# 构建尝试 URL 列表：镜像优先，直连作 fallback
+$coreUrls = @()
+if ($mirror) {
+    $coreUrls += "https://$mirror/$baseUrl"
+    $coreUrls += $baseUrl
+} else {
+    $coreUrls += $baseUrl
+}
 
+$downloaded = $false
 $client = New-Object Net.WebClient
-$bytes = $client.DownloadData($coreUrl)
-$code = [System.Text.Encoding]::UTF8.GetString($bytes)
-
-# Strip BOM character preserved by GetString (otherwise WriteAllText adds second BOM)
-$code = $code -replace "^\uFEFF", ""
-
-# Normalize all line endings to CRLF (fix CR-only / LF-only / mixed)
-$code = $code -replace "(`r`n|`n|`r)", "`r`n"
-
-# Write UTF-8 with BOM for Windows PowerShell 5.1 compatibility
 $utf8Bom = New-Object System.Text.UTF8Encoding($true)
-[System.IO.File]::WriteAllText($tmp, $code, $utf8Bom)
+
+foreach ($tryUrl in $coreUrls) {
+    Write-Host ">>> Downloading install-core.ps1..."
+    Write-Host "    $tryUrl"
+    try {
+        $bytes = $client.DownloadData($tryUrl)
+    } catch {
+        if ($tryUrl -ne $coreUrls[-1]) {
+            Write-Host "    下载失败，尝试下一源..." -ForegroundColor DarkYellow
+        }
+        continue
+    }
+
+    $code = [System.Text.Encoding]::UTF8.GetString($bytes)
+    # Strip BOM character preserved by GetString (otherwise WriteAllText adds second BOM)
+    $code = $code -replace "^\uFEFF", ""
+    # Normalize all line endings to CRLF (fix CR-only / LF-only / mixed)
+    $code = $code -replace "(`r`n|`n|`r)", "`r`n"
+
+    # 预解析校验：确保下载的脚本语法合法（排除镜像缓存损坏）
+    $parseErrs = @()
+    $dummyAst = $null
+    $null = [System.Management.Automation.Language.Parser]::ParseInput($code, [ref]$dummyAst, [ref]$parseErrs)
+    if ($parseErrs.Count -gt 0) {
+        Write-Host "    脚本语法错误 ($($parseErrs.Count) 处)，尝试下一源..." -ForegroundColor DarkYellow
+        if ($tryUrl -eq $coreUrls[-1]) {
+            $parseErrs | ForEach-Object { Write-Host "    [解析错误] $($_.Message)" -ForegroundColor Red }
+        }
+        continue
+    }
+
+    # Write UTF-8 with BOM for Windows PowerShell 5.1 compatibility
+    [System.IO.File]::WriteAllText($tmp, $code, $utf8Bom)
+    $downloaded = $true
+    break
+}
+
+if (-not $downloaded) {
+    throw "无法下载有效的 install-core.ps1"
+}
 
 # Build splat table and execute install-core.ps1
 $params = @{}
