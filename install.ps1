@@ -1,5 +1,5 @@
 # Shutdown Notice IEX bootstrap - irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
-# $SN_INSTALL_PATH='D:\Tools'; $SN_TAG='v0.1.0'; $SN_UNINSTALL=$true; $SN_REMOVE_FILES=$true
+# 国内加速: $SN_MIRROR='ghfast.top'; irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
 
 $ErrorActionPreference = 'Stop'
 
@@ -36,7 +36,9 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 # Download install-core.ps1
 $repo   = Get-SNValue -Name 'SN_REPO'   -DefaultValue 'NEANC/ShutdownNotice_Cpp'
 $branch = Get-SNValue -Name 'SN_BRANCH' -DefaultValue 'master'
-$coreUrl = "https://raw.githubusercontent.com/$repo/$branch/install-core.ps1"
+$mirror = Get-SNValue -Name 'SN_MIRROR' -DefaultValue ''
+$baseUrl = "https://raw.githubusercontent.com/$repo/$branch/install-core.ps1"
+$coreUrl = if ($mirror) { "https://$mirror/$baseUrl" } else { $baseUrl }
 $tmp = Join-Path $env:TEMP 'ShutdownNotice-install-core.ps1'
 
 Write-Host ">>> Downloading install-core.ps1..."
@@ -64,6 +66,7 @@ $tag = Get-SNValue -Name 'SN_TAG' -DefaultValue $null
 if ($tag) { $params['Tag'] = $tag }
 $token = Get-SNValue -Name 'SN_TOKEN' -DefaultValue $null
 if ($token) { $params['Token'] = $token }
+if ($mirror) { $params['Mirror'] = $mirror }
 if (Test-SNTrue -Name 'SN_UNINSTALL')    { $params['Uninstall']    = $true }
 if (Test-SNTrue -Name 'SN_REMOVE_FILES') { $params['RemoveFiles']  = $true }
 

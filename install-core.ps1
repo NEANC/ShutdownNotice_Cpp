@@ -1,4 +1,4 @@
-﻿#Requires -RunAsAdministrator
+﻿﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
     下载 Shutdown Notice 构建产物并安装 Windows 计划任务。
@@ -34,6 +34,7 @@ param(
     [string]$Repo = "NEANC/ShutdownNotice_Cpp",
     [string]$Tag = "",
     [string]$Token = "",
+    [string]$Mirror = "",
     [switch]$Uninstall,
     [switch]$RemoveFiles
 )
@@ -41,6 +42,8 @@ param(
 
 # 硬编码参数
 $Script:TaskFolder = "Shutdown Notice"
+$Script:MaxRetries = 3
+$Script:RetryDelaySeconds = 2
 
 # 事件 ID → 描述映射
 $Script:EventTasks = @(
@@ -129,6 +132,52 @@ function Write-Warn {
     Write-Host "    [警告] $Message" -ForegroundColor Yellow
 }
 
+# 镜像 URL 包装（国内加速用，如 ghfast.top）
+function Get-MirroredUrl {
+    param([string]$Url, [string]$MirrorHost)
+    if ($MirrorHost) {
+        return "https://$MirrorHost/$Url"
+    }
+    return $Url
+}
+
+# 带重试的 HTTP 下载
+function Invoke-DownloadWithRetry {
+    param(
+        [string]$Url,
+        [string]$OutFile,
+        [hashtable]$Headers = @{},
+        [string]$MirrorHost = $Mirror,
+        [int]$MaxRetries = $Script:MaxRetries,
+        [int]$BaseDelay = $Script:RetryDelaySeconds
+    )
+
+    $urls = @(Get-MirroredUrl -Url $Url -MirrorHost $MirrorHost)
+
+    # 如果配置了镜像，直连作为 fallback
+    if ($MirrorHost) { $urls += $Url }
+
+    foreach ($tryUrl in $urls) {
+        if ($tryUrl -ne $urls[0]) {
+            Write-Host "    尝试直连: $tryUrl" -ForegroundColor Gray
+        }
+        for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+            try {
+                Invoke-WebRequest -Uri $tryUrl -Headers $Headers -OutFile $OutFile -ErrorAction Stop
+                return $true
+            } catch {
+                if ($attempt -ge $MaxRetries) { break }
+                $delay = $BaseDelay * [Math]::Pow(2, $attempt - 1)
+                Write-Host "    等待 ${delay}s 后重试..." -ForegroundColor DarkYellow
+                Start-Sleep -Seconds $delay
+            }
+        }
+        # 移除失败的部分下载文件
+        Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
+    }
+    return $false
+}
+
 # 下载构建产物
 function Get-LatestRelease {
     $headers = @{ "Accept" = "application/vnd.github+json" }
@@ -137,10 +186,11 @@ function Get-LatestRelease {
     }
 
     if ($Tag) {
-        $url = "https://api.github.com/repos/$Repo/releases/tags/$Tag"
+        $apiPath = "repos/$Repo/releases/tags/$Tag"
     } else {
-        $url = "https://api.github.com/repos/$Repo/releases/latest"
+        $apiPath = "repos/$Repo/releases/latest"
     }
+    $url = Get-MirroredUrl -Url "https://api.github.com/$apiPath" -MirrorHost $Mirror
 
     Write-Step "查询 GitHub Release: $url"
     try {
@@ -182,11 +232,11 @@ function Invoke-Download {
     foreach ($asset in $exeAssets) {
         $dest = Join-Path $InstallPath $asset.name
         Write-Host "    下载: $($asset.name) ($('{0:N0}' -f $asset.size) bytes)"
-        try {
-            Invoke-WebRequest -Uri $asset.browser_download_url -Headers $headers -OutFile $dest -ErrorAction Stop
+        $success = Invoke-DownloadWithRetry -Url $asset.browser_download_url -OutFile $dest -Headers $headers -MirrorHost $Mirror
+        if ($success) {
             Write-OK "已保存: $dest"
-        } catch {
-            Write-Err "下载失败: $($asset.name) - $_"
+        } else {
+            Write-Err "下载失败: $($asset.name)"
         }
     }
 }
