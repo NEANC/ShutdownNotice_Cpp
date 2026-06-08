@@ -1,13 +1,20 @@
 ﻿<#
 .SYNOPSIS
-    install.ps1 单元测试 — 兼容 PowerShell 5.1 和 7
+    install-core.ps1 单元测试 — 兼容 PowerShell 5.1 和 7
 .DESCRIPTION
-    验证 install.ps1 的语法正确性和核心逻辑，
+    验证 install.ps1 (bootstrap) 和 install-core.ps1 (核心) 的语法正确性和核心逻辑，
     不依赖 Pester，使用纯 PowerShell 断言。
 #>
 
 $ErrorActionPreference = "Stop"
 $Script:TestCount = 0
+$Script:FailCount = 0
+
+$RepoRoot = Join-Path $PSScriptRoot ".."
+
+# 被测试的两个文件
+$Script:BootstrapPath = Join-Path $RepoRoot "install.ps1"
+$Script:CorePath = Join-Path $RepoRoot "install-core.ps1"
 $Script:PassCount = 0
 $Script:FailCount = 0
 
@@ -69,36 +76,48 @@ function Assert-NotContains {
 }
 
 # ============================================================
-# 测试 1: 脚本语法验证
+# 测试 1: install.ps1 (bootstrap) 语法验证
 # ============================================================
 Write-Host ""
 Write-Host "=== 测试 1: 语法验证 ===" -ForegroundColor Cyan
 
-$installPath = Join-Path $PSScriptRoot "..\install.ps1"
-$installContent = Get-Content -Path $installPath -Raw -Encoding UTF8
-
-# 移除顶部的 #Requires 行以便在 CI 中解析（CI 无管理员权限）
-$testableContent = $installContent -replace '#Requires -RunAsAdministrator', '# Requires removed for CI test'
-
+# 1a. bootstrap 脚本 (irm | iex 入口)
+$bootstrapContent = Get-Content -Path $Script:BootstrapPath -Raw -Encoding UTF8
 $parsed = $null
 try {
-    $parsed = [ScriptBlock]::Create($testableContent)
-    Assert-True "脚本语法有效" $true
+    $parsed = [ScriptBlock]::Create($bootstrapContent)
+    Assert-True "install.ps1 语法有效" $true
 } catch {
-    Assert-True "脚本语法有效" $false
+    Assert-True "install.ps1 语法有效" $false
     Write-Host "        解析错误: $_" -ForegroundColor Red
     exit 1
 }
-
-# 检查 AST 完整性
 $ast = $parsed.Ast
-Assert-True "AST 解析成功" ($ast -ne $null)
-
-# 验证必要的函数定义
+Assert-True "install.ps1 AST 解析成功" ($ast -ne $null)
 $funcNames = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | ForEach-Object { $_.Name }
+Assert-True "install.ps1 含 Get-SNValue" ($funcNames -contains "Get-SNValue")
+Assert-True "install.ps1 含 Test-SNTrue" ($funcNames -contains "Test-SNTrue")
+
+# 1b. 核心脚本 (install-core.ps1)
+Write-Host ""
+Write-Host "--- install-core.ps1 ---"
+$coreContent = Get-Content -Path $Script:CorePath -Raw -Encoding UTF8
+$coreTestable = $coreContent -replace '#Requires -RunAsAdministrator', '# Requires removed for CI test'
+$parsed2 = $null
+try {
+    $parsed2 = [ScriptBlock]::Create($coreTestable)
+    Assert-True "install-core.ps1 语法有效" $true
+} catch {
+    Assert-True "install-core.ps1 语法有效" $false
+    Write-Host "        解析错误: $_" -ForegroundColor Red
+    exit 1
+}
+$ast2 = $parsed2.Ast
+Assert-True "install-core.ps1 AST 解析成功" ($ast2 -ne $null)
+$funcNames2 = $ast2.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | ForEach-Object { $_.Name }
 $requiredFuncs = @("Main", "Invoke-Download", "New-EventTask", "Register-AllTasks", "New-ConfigTemplate", "Get-LatestRelease", "Uninstall-ShutdownNotice")
 foreach ($f in $requiredFuncs) {
-    Assert-True "函数 $f 已定义" ($funcNames -contains $f)
+    Assert-True "函数 $f 已定义" ($funcNames2 -contains $f)
 }
 
 # ============================================================
@@ -336,7 +355,8 @@ Assert-True "支持 where 脚本块" $true
 Write-Host ""
 Write-Host "=== 测试 7: 参数定义 ===" -ForegroundColor Cyan
 
-$paramBlock = $ast.Find({ $args[0] -is [System.Management.Automation.Language.ParamBlockAst] }, $true)
+# 参数定义来自 install-core.ps1
+$paramBlock = $ast2.Find({ $args[0] -is [System.Management.Automation.Language.ParamBlockAst] }, $true)
 Assert-True "参数块存在" ($paramBlock -ne $null)
 
 if ($paramBlock) {
