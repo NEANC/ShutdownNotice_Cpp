@@ -71,15 +71,18 @@ foreach ($tryUrl in $coreUrls) {
     # Normalize all line endings to CRLF (fix CR-only / LF-only / mixed)
     $code = $code -replace "(`r`n|`n|`r)", "`r`n"
 
-    # 预解析校验：确保下载的脚本语法合法（排除镜像缓存损坏）
-    $parseErrs = @()
-    $dummyAst = $null
-    $null = [System.Management.Automation.Language.Parser]::ParseInput($code, [ref]$dummyAst, [ref]$parseErrs)
-    if ($parseErrs.Count -gt 0) {
-        Write-Host "    脚本语法错误 ($($parseErrs.Count) 处)，尝试下一源..." -ForegroundColor DarkYellow
-        if ($tryUrl -eq $coreUrls[-1]) {
-            $parseErrs | ForEach-Object { Write-Host "    [解析错误] $($_.Message)" -ForegroundColor Red }
-        }
+    # 内容结构校验：排除镜像缓存截断/损坏（避免 PSParser 误报 param() 赋值）
+    $hasParam   = $code -match '\bparam\s*\('
+    $hasMain    = $code -match '\bfunction\s+Main\b'
+    $hasHereStr = $code -match "@'[\s\S]*'@"
+    $lineCount  = ($code -split "`r`n").Count
+    if (-not $hasParam -or -not $hasMain -or -not $hasHereStr -or $lineCount -lt 50) {
+        $missing = @()
+        if (-not $hasParam)   { $missing += 'param' }
+        if (-not $hasMain)    { $missing += 'Main' }
+        if (-not $hasHereStr) { $missing += 'here-string' }
+        if ($lineCount -lt 50) { $missing += "仅 $lineCount 行" }
+        Write-Host "    内容结构异常 (缺少: $($missing -join ', '))，尝试下一源..." -ForegroundColor DarkYellow
         continue
     }
 
