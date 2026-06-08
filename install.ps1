@@ -231,7 +231,8 @@ function New-EventTask {
 
         # 注册任务
         $result = schtasks /create /tn $taskFullName /xml $xmlFile /f 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $createExit = $LASTEXITCODE
+        if ($createExit -eq 0) {
             Write-OK "已注册: $taskFullName"
         } else {
             Write-Err "注册失败: $taskFullName — $result"
