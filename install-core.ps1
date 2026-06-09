@@ -13,6 +13,8 @@
     指定下载版本标签（如 v1.0.0）。留空则下载最新 Release。
 .PARAMETER Token
     GitHub Personal Access Token（可选）。用于避免 API 速率限制。
+.PARAMETER Mirror
+    国内加速镜像域名（可选），如 "ghfast.top"。仅用于下载 .exe，API 查询始终直连。
 .PARAMETER Uninstall
     卸载模式：移除所有计划任务，可选删除安装目录。
 .PARAMETER RemoveFiles
@@ -242,6 +244,8 @@ function Invoke-Download {
     $headers = @{ "Accept" = "application/octet-stream" }
     if ($Token) { $headers["Authorization"] = "Bearer $Token" }
 
+    $Script:VerifiedExes = @()
+
     foreach ($asset in $exeAssets) {
         $dest = Join-Path $InstallPath $asset.name
         Write-Host "    下载: $($asset.name) ($('{0:N0}' -f $asset.size) bytes)"
@@ -258,6 +262,7 @@ function Invoke-Download {
             $actual = Get-FileSha256 -FilePath $dest
             if ($actual -eq $expected) {
                 Write-OK "校验通过: $dest"
+                $Script:VerifiedExes += $dest
             } else {
                 Write-Err "SHA256 校验失败: $($asset.name)"
                 Write-Err "  云端: $expected"
@@ -266,6 +271,7 @@ function Invoke-Download {
             }
         } else {
             Write-OK "已保存: $dest"
+            $Script:VerifiedExes += $dest
         }
     }
 }
@@ -355,45 +361,6 @@ function Register-AllTasks {
     }
 }
 
-# 创建 config.ini 模板
-function New-ConfigTemplate {
-    $configPath = Join-Path $InstallPath "config.ini"
-    if (Test-Path $configPath) {
-        Write-OK "config.ini 已存在，跳过生成"
-        return
-    }
-
-    $template = @"
-# 关机通知系统 - 配置文件
-# 支持同时配置多个通知渠道，任一渠道成功即视为推送成功
-
-[notify]
-# 通知策略: primary_only (仅主通道) / failover (主通道失败后备用) / both_sequential (串行双通道)
-mode = failover
-# 主通道: dingtalk / serverchan
-primary = dingtalk
-
-[serverchan]
-# ServerChan 推送密钥
-sendkey = 
-
-[dingtalk]
-# 钉钉机器人密钥
-access_token = 
-
-# 钉钉机器人加签密钥 (可选)，留空则不启用加签
-secret = 
-
-[http]
-# 确认模式: response_header (等待服务器返回状态码) / send_completed (发送后立即终止程序，不保证信息送达)
-ack_mode = response_header
-"@
-
-    Set-Content -Path $configPath -Value $template -Encoding UTF8
-    Write-Warn "已生成 config.ini 模板，请填写通知渠道配置: $configPath"
-}
-
-
 # 卸载
 function Uninstall-ShutdownNotice {
     Write-Step "卸载 Shutdown Notice"
@@ -475,8 +442,16 @@ function Main {
     # 下载构建产物
     Invoke-Download
 
-    # 生成配置模板
-    New-ConfigTemplate
+    # 启动一次已验证的 exe 触发程序自动创建 config.ini
+    if ($Script:VerifiedExes) {
+        Write-Host "  初始化配置文件..."
+        $null = & $Script:VerifiedExes[0] 2>&1
+        if (Test-Path (Join-Path $InstallPath 'config.ini')) {
+            Write-OK "config.ini 已自动生成，请填写后生效"
+        } else {
+            Write-Warn "config.ini 未生成，请检查 exe 是否运行正常"
+        }
+    }
 
     # 注册任务
     Register-AllTasks
