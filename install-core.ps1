@@ -367,22 +367,22 @@ function New-ConfigTemplate {
 # 关机通知系统 - 配置文件
 # 支持同时配置多个通知渠道，任一渠道成功即视为推送成功
 
+[notify]
+# 通知策略: primary_only (仅主通道) / failover (主通道失败后备用) / both_sequential (串行双通道)
+mode = failover
+# 主通道: dingtalk / serverchan
+primary = dingtalk
+
 [serverchan]
-# 留空则不启用 ServerChan 推送
+# ServerChan 推送密钥
 sendkey = 
 
 [dingtalk]
 # 钉钉机器人密钥
 access_token = 
 
-# 钉钉机器人加签密钥 (可选)
+# 钉钉机器人加签密钥 (可选)，留空则不启用加签
 secret = 
-
-[notify]
-# 通知策略: primary_only / failover / both_sequential
-mode = failover
-# 主通道: dingtalk / serverchan
-primary = dingtalk
 
 [http]
 # 确认模式: response_header (等待服务器返回状态码) / send_completed (发送后立即终止程序，不保证信息送达)
