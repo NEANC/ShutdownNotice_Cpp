@@ -27,73 +27,135 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      # 检查是否符合 UTF-8 BOM + CRLF
-      - name: 检查 BOM 与换行符
+      - name: Collect target files
+        id: collect-target-files
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const targetFiles = [
+              'install-core.ps1',
+              'install.ps1'
+            ];
+
+            let filesToCheck = targetFiles;
+
+            if (context.eventName === 'pull_request') {
+              const pr = context.payload.pull_request;
+
+              const changedFiles = await github.paginate(
+                github.rest.pulls.listFiles,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                  per_page: 100
+                }
+              );
+
+              const changedFileNames = new Set(
+                changedFiles.map(file => file.filename)
+              );
+
+              filesToCheck = targetFiles.filter(file =>
+                changedFileNames.has(file)
+              );
+            }
+
+            core.info(`Files to check: ${filesToCheck.join(', ') || '(none)'}`);
+            core.setOutput('target_files_json', JSON.stringify(filesToCheck));
+
+      - name: Check UTF-8 with BOM and CRLF
         id: check
+        env:
+          TARGET_FILES_JSON: ${{ steps.collect-target-files.outputs.target_files_json }}
         run: |
           set -euo pipefail
 
-          python3 -c "
+          python3 - <<'PY'
+          import json
+          import os
           import sys
+          from pathlib import Path
 
           BOM = b'\xEF\xBB\xBF'
-          files = ['install-core.ps1', 'install.ps1']
+          files = json.loads(os.environ.get('TARGET_FILES_JSON', '[]'))
+
           all_ok = True
+          failed_files = []
+
+          if not files:
+              print('[OK] No target files changed.')
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+                  out.write('failed_files_json=[]\n')
+              sys.exit(0)
 
           for path in files:
-              with open(path, 'rb') as f:
-                  data = f.read()
-
+              p = Path(path)
               errors = []
 
-              # 检查 BOM
-              bom_count = 0
-              while data.startswith(BOM):
-                  bom_count += 1
-                  data = data[len(BOM):]
-              if bom_count == 0:
-                  errors.append('缺少 UTF-8 BOM')
-              elif bom_count > 1:
-                  errors.append(f'BOM 重复 ({bom_count} 个)')
+              if not p.exists():
+                  errors.append('文件不存在')
+              else:
+                  data = p.read_bytes()
 
-              # 检查换行符
-              has_crlf = b'\r\n' in data
-              has_lf_only = b'\r\n' not in data and b'\n' in data
-              has_cr_only = b'\r\n' not in data and b'\r' in data
+                  # 检查 BOM
+                  bom_count = 0
+                  while data.startswith(BOM):
+                      bom_count += 1
+                      data = data[len(BOM):]
 
-              if has_cr_only and not has_crlf:
-                  errors.append('换行符为 CR')
-              elif has_lf_only:
-                  errors.append('换行符为 LF')
-              elif not has_crlf and not has_lf_only and not has_cr_only:
-                  errors.append('未检测到标准换行符')
+                  if bom_count == 0:
+                      errors.append('缺少 UTF-8 BOM')
+                  elif bom_count > 1:
+                      errors.append(f'BOM 重复 ({bom_count} 个)')
+
+                  # 检查换行符：标准化后比对，捕获混合换行符
+                  normalized = data.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+                  expected = normalized.replace(b'\n', b'\r\n')
+                  if data != expected:
+                      errors.append('换行符不是 CRLF')
+                  elif b'\r\n' not in data:
+                      errors.append('未检测到 CRLF 换行符')
 
               if errors:
                   print(f'=== {path} 检查失败 ===')
                   for e in errors:
                       print(f'  [FAIL] {e}')
+                  failed_files.append(path)
                   all_ok = False
               else:
-                  print(f'[OK] {path}: BOM={bom_count}, CRLF')
+                  print(f'[OK] {path}: UTF-8 BOM + CRLF')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write(f'failed_files_json={json.dumps(failed_files)}\n')
 
           if not all_ok:
               sys.exit(1)
-          "
+          PY
 
-      - name: Normalize install-core.ps1
+      - name: Normalize changed files
         if: failure() && steps.check.outcome == 'failure'
+        env:
+          TARGET_FILES_JSON: ${{ steps.collect-target-files.outputs.target_files_json }}
         run: |
           set -euo pipefail
 
-          python3 -c "
-          import sys
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
           BOM = b'\xEF\xBB\xBF'
-          files = ['install-core.ps1', 'install.ps1']
+          files = json.loads(os.environ.get('TARGET_FILES_JSON', '[]'))
 
           for path in files:
-              with open(path, 'rb') as f:
-                  data = f.read()
+              p = Path(path)
+
+              if not p.exists():
+                  print(f'SKIP: {path} does not exist')
+                  continue
+
+              data = p.read_bytes()
 
               # 1. 剥离所有重复 BOM
               bom_count = 0
@@ -105,13 +167,11 @@ jobs:
               data = data.replace(b'\r\n', b'\n').replace(b'\r', b'\n').replace(b'\n', b'\r\n')
 
               # 3. 写回单 BOM + 内容
-              with open(path, 'wb') as f:
-                  f.write(BOM + data)
+              p.write_bytes(BOM + data)
 
               print(f'{path}: stripped {bom_count} BOM(s), normalized line endings')
-          "
+          PY
 
-          # 检查是否有文件被修改
           if git diff --quiet; then
             echo "All files already normalized."
             exit 0
@@ -148,20 +208,29 @@ jobs:
         if: |
           failure() &&
           steps.check.outcome == 'failure' &&
-          github.event_name == 'pull_request'
+          github.event_name == 'pull_request' &&
+          steps.check.outputs.failed_files_json != '[]'
+        env:
+          FAILED_FILES_JSON: ${{ steps.check.outputs.failed_files_json }}
         run: |
-          echo "::warning file=install-core.ps1,title=Invalid file encoding::install-core.ps1 must be saved as UTF-8 with BOM and CRLF line endings"
-          echo "::warning file=install.ps1,title=Invalid file encoding::install.ps1 must be saved as UTF-8 with BOM and CRLF line endings"
-          echo ""
-          echo "Fix command:"
-          echo "  python fix_normalize_line_endings.py"
+          python3 - <<'PY'
+          import json, os
+          failed = json.loads(os.environ.get('FAILED_FILES_JSON', '[]'))
+          for f in failed:
+              print(f"::warning file={f},title=编码格式不符合规范::{f} must be saved as UTF-8 with BOM and CRLF")
+          print()
+          print("Fix command: python fix_normalize_line_endings.py")
+          PY
 
       - name: Push PR Diagnostic Report
         if: |
           failure() &&
           steps.check.outcome == 'failure' &&
-          github.event_name == 'pull_request'
+          github.event_name == 'pull_request' &&
+          steps.check.outputs.failed_files_json != '[]'
         uses: actions/github-script@v9
+        env:
+          FAILED_FILES_JSON: ${{ steps.check.outputs.failed_files_json }}
         with:
           script: |
             const pr = context.payload.pull_request;
@@ -171,33 +240,44 @@ jobs:
               return;
             }
 
+            const failedFiles = JSON.parse(process.env.FAILED_FILES_JSON || '[]');
+
+            if (failedFiles.length === 0) {
+              core.info('No failed target files, skip PR diagnostic report.');
+              return;
+            }
+
             const marker = '<!-- powershell-format-diagnostic -->';
 
-            const body = `${marker}
-            ## PR Diagnostic Report / PR 诊断报告
+            const affectedFileList = failedFiles
+              .map(file => `- \`${file}\``)
+              .join('\n');
 
-            ⚠️ The following PowerShell files do not meet the required format.  
-            ⚠️ 以下 PowerShell 文件格式不符合要求。
-
-            **Affected files / 受影响文件:**
-
-            - \`install-core.ps1\`
-            - \`install.ps1\`
-
-            **Requirements / 格式要求:**
-
-            - UTF-8 with BOM
-            - CRLF line endings
-
-            **Fix command / 修复命令:**
-
-            \`\`\`bash
-            python fix_normalize_line_endings.py
-            \`\`\`
-
-            Please run the command above and push the changes again.  
-            请运行上述命令后重新提交。
-            `;
+            const body = [
+              marker,
+              '## PR Diagnostic Report / PR 诊断报告',
+              '',
+              '⚠️ The following modified PowerShell file(s) do not meet the required format.',
+              '⚠️ 以下本次 PR 修改的 PowerShell 文件格式不符合要求。',
+              '',
+              '**Affected file(s) / 受影响文件:**',
+              '',
+              affectedFileList,
+              '',
+              '**Requirements / 格式要求:**',
+              '',
+              '- UTF-8 with BOM',
+              '- CRLF line endings',
+              '',
+              '**Fix command / 修复命令:**',
+              '',
+              '```bash',
+              'python fix_normalize_line_endings.py',
+              '```',
+              '',
+              'Please run the command above and push the changes again.',
+              '请运行上述命令后重新提交。'
+            ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
