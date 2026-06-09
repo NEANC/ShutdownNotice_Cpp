@@ -1,21 +1,49 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Normalize install-core.ps1 / install.ps1 to UTF-8 with BOM + CRLF line endings."""
+
 from pathlib import Path
 
-path = Path(__file__).resolve().parent / "install-core.ps1"
-bom = b"\xEF\xBB\xBF"
+BOM = b"\xEF\xBB\xBF"
+FILES = ["install-core.ps1", "install.ps1"]
+ROOT = Path(__file__).resolve().parent
 
-data = path.read_bytes()
 
-while data.startswith(bom):
-    data = data[len(bom):]
+def normalize_file(path: Path) -> None:
+    data = path.read_bytes()
 
-text = data.decode("utf-8")
+    # 1. Strip all leading BOMs to avoid duplicate BOMs.
+    bom_count = 0
+    while data.startswith(BOM):
+        bom_count += 1
+        data = data[len(BOM):]
 
-# 可选：移除文件开头空行
-text = text.lstrip("\r\n")
+    # 2. Normalize all line endings to CRLF.
+    data = (
+        data
+        .replace(b"\r\n", b"\n")
+        .replace(b"\r", b"\n")
+        .replace(b"\n", b"\r\n")
+    )
 
-text = text.replace("\r\n", "\n").replace("\r", "\n")
-text = text.replace("\n", "\r\n")
+    # 3. Write back as UTF-8 with BOM + CRLF.
+    path.write_bytes(BOM + data)
 
-path.write_bytes(bom + text.encode("utf-8"))
+    print(f"OK: {path.name} - stripped {bom_count} BOM(s), normalized to UTF-8 with BOM + CRLF")
 
-print("OK: normalize install-core.ps1 to UTF-8 with BOM and CRLF line endings")
+
+def main() -> None:
+    for name in FILES:
+        path = ROOT / name
+
+        if not path.exists():
+            print(f"SKIP: {name} does not exist")
+            continue
+
+        normalize_file(path)
+
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()

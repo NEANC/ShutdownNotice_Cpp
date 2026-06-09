@@ -5,10 +5,12 @@ on:
     branches: [master]
     paths:
       - 'install-core.ps1'
+      - 'install.ps1'
   pull_request:
     branches: [master]
     paths:
       - 'install-core.ps1'
+      - 'install.ps1'
   workflow_dispatch:
 
 permissions:
@@ -35,41 +37,47 @@ jobs:
           import sys
 
           BOM = b'\xEF\xBB\xBF'
-          path = 'install-core.ps1'
-          with open(path, 'rb') as f:
-              data = f.read()
+          files = ['install-core.ps1', 'install.ps1']
+          all_ok = True
 
-          errors = []
+          for path in files:
+              with open(path, 'rb') as f:
+                  data = f.read()
 
-          # 检查 BOM
-          bom_count = 0
-          while data.startswith(BOM):
-              bom_count += 1
-              data = data[len(BOM):]
-          if bom_count == 0:
-              errors.append('缺少 UTF-8 BOM')
-          elif bom_count > 1:
-              errors.append(f'BOM 重复 ({bom_count} 个)')
+              errors = []
 
-          # 检查换行符
-          has_crlf = b'\r\n' in data
-          has_lf_only = b'\r\n' not in data and b'\n' in data
-          has_cr_only = b'\r\n' not in data and b'\r' in data
+              # 检查 BOM
+              bom_count = 0
+              while data.startswith(BOM):
+                  bom_count += 1
+                  data = data[len(BOM):]
+              if bom_count == 0:
+                  errors.append('缺少 UTF-8 BOM')
+              elif bom_count > 1:
+                  errors.append(f'BOM 重复 ({bom_count} 个)')
 
-          if has_cr_only and not has_crlf:
-              errors.append('换行符为 CR')
-          elif has_lf_only:
-              errors.append('换行符为 LF')
-          elif not has_crlf and not has_lf_only and not has_cr_only:
-              errors.append('未检测到标准换行符')
+              # 检查换行符
+              has_crlf = b'\r\n' in data
+              has_lf_only = b'\r\n' not in data and b'\n' in data
+              has_cr_only = b'\r\n' not in data and b'\r' in data
 
-          if errors:
-              print('=== BOM/CRLF 检查失败 ===')
-              for e in errors:
-                  print(f'  [FAIL] {e}')
+              if has_cr_only and not has_crlf:
+                  errors.append('换行符为 CR')
+              elif has_lf_only:
+                  errors.append('换行符为 LF')
+              elif not has_crlf and not has_lf_only and not has_cr_only:
+                  errors.append('未检测到标准换行符')
+
+              if errors:
+                  print(f'=== {path} 检查失败 ===')
+                  for e in errors:
+                      print(f'  [FAIL] {e}')
+                  all_ok = False
+              else:
+                  print(f'[OK] {path}: BOM={bom_count}, CRLF')
+
+          if not all_ok:
               sys.exit(1)
-          else:
-              print(f'[OK] BOM: {bom_count} 个, 换行符: CRLF')
           "
 
       - name: Normalize install-core.ps1
@@ -79,31 +87,33 @@ jobs:
 
           python3 -c "
           import sys
-          path = 'install-core.ps1'
-          with open(path, 'rb') as f:
-              data = f.read()
 
           BOM = b'\xEF\xBB\xBF'
+          files = ['install-core.ps1', 'install.ps1']
 
-          # 1. 剥离所有重复 BOM
-          bom_count = 0
-          while data.startswith(BOM):
-              bom_count += 1
-              data = data[len(BOM):]
+          for path in files:
+              with open(path, 'rb') as f:
+                  data = f.read()
 
-          # 2. 统一换行为 CRLF
-          data = data.replace(b'\r\n', b'\n').replace(b'\r', b'\n').replace(b'\n', b'\r\n')
+              # 1. 剥离所有重复 BOM
+              bom_count = 0
+              while data.startswith(BOM):
+                  bom_count += 1
+                  data = data[len(BOM):]
 
-          # 3. 写回单 BOM + 内容
-          with open(path, 'wb') as f:
-              f.write(BOM + data)
+              # 2. 统一换行为 CRLF
+              data = data.replace(b'\r\n', b'\n').replace(b'\r', b'\n').replace(b'\n', b'\r\n')
 
-          print(f'{path}: stripped {bom_count} BOM(s), normalized line endings')
+              # 3. 写回单 BOM + 内容
+              with open(path, 'wb') as f:
+                  f.write(BOM + data)
+
+              print(f'{path}: stripped {bom_count} BOM(s), normalized line endings')
           "
 
           # 检查是否有文件被修改
           if git diff --quiet; then
-            echo "install-core.ps1 already normalized."
+            echo "All files already normalized."
             exit 0
           fi
 
@@ -125,8 +135,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add install-core.ps1
-          git commit -m "auto fix: normalize install-core.ps1 to UTF-8 with BOM and CRLF line endings"
+          git add install-core.ps1 install.ps1
+          git commit -m "auto fix: normalize .ps1 files to UTF-8 with BOM and CRLF"
 
           # 拉取最新避免冲突
           git pull --rebase origin master
@@ -141,6 +151,7 @@ jobs:
           github.event_name == 'pull_request'
         run: |
           echo "::warning file=install-core.ps1,title=Invalid file encoding::install-core.ps1 must be saved as UTF-8 with BOM and CRLF line endings"
+          echo "::warning file=install.ps1,title=Invalid file encoding::install.ps1 must be saved as UTF-8 with BOM and CRLF line endings"
           echo ""
           echo "Fix command:"
           echo "  python fix_normalize_line_endings.py"
@@ -160,13 +171,18 @@ jobs:
               return;
             }
 
-            const marker = '<!-- install-core-format-diagnostic -->';
+            const marker = '<!-- powershell-format-diagnostic -->';
 
             const body = `${marker}
             ## PR Diagnostic Report / PR 诊断报告
 
-            ⚠️ The file \`install-core.ps1\` does not meet the required format.  
-            ⚠️ \`install-core.ps1\` 文件格式不符合要求。
+            ⚠️ The following PowerShell files do not meet the required format.  
+            ⚠️ 以下 PowerShell 文件格式不符合要求。
+
+            **Affected files / 受影响文件:**
+
+            - \`install-core.ps1\`
+            - \`install.ps1\`
 
             **Requirements / 格式要求:**
 
