@@ -106,6 +106,7 @@ $Script:TaskTemplate = @'
     <Exec>
       <Command>__EXEPATH__</Command>
       <Arguments>--event-id __EVENTID__ --record "$(EventRecordID)" --time "$(SystemTime)" --computer "$(Computer)" --provider "$(Provider)"</Arguments>
+      <WorkingDirectory>__WORKDIR__</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>
@@ -288,6 +289,7 @@ function New-EventTask {
 
     # 填充模板
     $timeStr = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
+    $workDir = Split-Path -Parent $ExePath
     $xml = $Script:TaskTemplate.
         Replace("__TIME__", $timeStr).
         Replace("__AUTHOR__", $author).
@@ -296,7 +298,8 @@ function New-EventTask {
         Replace("__NAME__", $TaskName).
         Replace("__EVENTID__", [string]$EventID).
         Replace("__USERID__", $userId).
-        Replace("__EXEPATH__", $ExePath)
+        Replace("__EXEPATH__", $ExePath).
+        Replace("__WORKDIR__", $workDir)
 
     # 写入临时文件
     $utf16 = [System.Text.Encoding]::Unicode
