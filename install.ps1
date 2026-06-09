@@ -30,6 +30,13 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host ""
+    Write-Host "  错误：需要管理员权限" -ForegroundColor Red
+    Write-Host "----------------------------------------" -ForegroundColor Red
+    Write-Host "  请以管理员身份运行 PowerShell 后重试" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  方法: Win+X → Windows PowerShell(管理员)" -ForegroundColor Gray
+    Write-Host ""
     throw 'Please run as Administrator.'
 }
 
@@ -93,6 +100,23 @@ foreach ($tryUrl in $coreUrls) {
 }
 
 if (-not $downloaded) {
+    Write-Host ""
+    Write-Host "  错误：无法下载 install-core.ps1" -ForegroundColor Red
+    Write-Host "----------------------------------------" -ForegroundColor Red
+    Write-Host "  所有下载源均失败，请检查网络连接后重试" -ForegroundColor Yellow
+    Write-Host ""
+    if ($mirror) {
+        Write-Host "  已尝试镜像: https://$mirror/$baseUrl" -ForegroundColor Gray
+        Write-Host "  已尝试直连: $baseUrl" -ForegroundColor Gray
+    } else {
+        Write-Host "  尝试地址: $baseUrl" -ForegroundColor Gray
+    }
+    Write-Host ""
+    Write-Host "  排查建议:" -ForegroundColor DarkYellow
+    Write-Host "  1. 检查是否可以访问 github.com" -ForegroundColor Gray
+    Write-Host "  2. 尝试关闭代理或 VPN" -ForegroundColor Gray
+    Write-Host "  3. 手动下载: $baseUrl" -ForegroundColor Gray
+    Write-Host ""
     throw "无法下载有效的 install-core.ps1"
 }
 
