@@ -86,6 +86,23 @@ $SN_INSTALL_PATH='D:\Tools\SN'; $SN_TAG='v0.1.0'; irm https://raw.githubusercont
 $SN_MIRROR='ghfast.top'; $SN_INSTALL_PATH='D:\Tools\SN'; $SN_TAG='v0.1.0';  irm https://ghfast.top/https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
 ```
 
+### 传递参数安装
+
+```powershell
+$SN_SENDKEY='SCT123456'; $SN_ACCESS_TOKEN='abc123def'; $SN_SECRET='SEC...'; irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
+```
+
+支持传递 `config.ini` 对应参数，无需手动编辑。支持以下配置变量：
+
+| 变量                 | 对应 config.ini 键        | 说明                                      |
+| -------------------- | ------------------------- | ----------------------------------------- |
+| `$SN_SENDKEY`        | `[serverchan] sendkey`    | Server酱 SendKey                          |
+| `$SN_ACCESS_TOKEN`   | `[dingtalk] access_token` | 钉钉机器人 token                          |
+| `$SN_SECRET`         | `[dingtalk] secret`       | 钉钉加签密钥                              |
+| `$SN_NOTIFY_MODE`    | `[notify] mode`           | primary_only / failover / both_sequential |
+| `$SN_NOTIFY_PRIMARY` | `[notify] primary`        | dingtalk / serverchan                     |
+| `$SN_ACK_MODE`       | `[http] ack_mode`         | response_header / send_completed          |
+
 ### 卸载
 
 ```powershell

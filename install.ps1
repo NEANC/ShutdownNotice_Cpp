@@ -1,5 +1,6 @@
 # Shutdown Notice IEX bootstrap - irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
-# 国内加速: $SN_MIRROR='ghfast.top'; irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
+# 国内加速: $SN_MIRROR='ghfast.top'; irm https://ghfast.top/.../install.ps1 | iex
+# 预配置: $SN_SENDKEY='SCT...'; $SN_ACCESS_TOKEN='abc'; irm ... | iex
 
 $ErrorActionPreference = 'Stop'
 
@@ -129,6 +130,21 @@ if ($tag) { $params['Tag'] = $tag }
 $token = Get-SNValue -Name 'SN_TOKEN' -DefaultValue $null
 if ($token) { $params['Token'] = $token }
 if ($mirror) { $params['Mirror'] = $mirror }
+
+# Config values (pre-fill config.ini)
+$sendKey = Get-SNValue -Name 'SN_SENDKEY' -DefaultValue $null
+if ($sendKey)       { $params['SendKey']        = $sendKey }
+$accessToken = Get-SNValue -Name 'SN_ACCESS_TOKEN' -DefaultValue $null
+if ($accessToken)   { $params['AccessToken']     = $accessToken }
+$secret = Get-SNValue -Name 'SN_SECRET' -DefaultValue $null
+if ($secret)        { $params['Secret']          = $secret }
+$notifyMode = Get-SNValue -Name 'SN_NOTIFY_MODE' -DefaultValue $null
+if ($notifyMode)    { $params['NotifyMode']      = $notifyMode }
+$notifyPrimary = Get-SNValue -Name 'SN_NOTIFY_PRIMARY' -DefaultValue $null
+if ($notifyPrimary) { $params['NotifyPrimary']    = $notifyPrimary }
+$ackMode = Get-SNValue -Name 'SN_ACK_MODE' -DefaultValue $null
+if ($ackMode)       { $params['AckMode']         = $ackMode }
+
 if (Test-SNTrue -Name 'SN_UNINSTALL')    { $params['Uninstall']    = $true }
 if (Test-SNTrue -Name 'SN_REMOVE_FILES') { $params['RemoveFiles']  = $true }
 

@@ -368,9 +368,15 @@ if ($paramBlock) {
     Assert-True "包含 Tag 参数" ($paramNames -contains "Tag")
     Assert-True "包含 Token 参数" ($paramNames -contains "Token")
     Assert-True "包含 Mirror 参数" ($paramNames -contains "Mirror")
+    Assert-True "包含 SendKey 参数" ($paramNames -contains "SendKey")
+    Assert-True "包含 AccessToken 参数" ($paramNames -contains "AccessToken")
+    Assert-True "包含 Secret 参数" ($paramNames -contains "Secret")
+    Assert-True "包含 NotifyMode 参数" ($paramNames -contains "NotifyMode")
+    Assert-True "包含 NotifyPrimary 参数" ($paramNames -contains "NotifyPrimary")
+    Assert-True "包含 AckMode 参数" ($paramNames -contains "AckMode")
     Assert-True "包含 Uninstall 参数" ($paramNames -contains "Uninstall")
     Assert-True "包含 RemoveFiles 参数" ($paramNames -contains "RemoveFiles")
-    Assert-Equal "参数数量" 7 $paramBlock.Parameters.Count
+    Assert-Equal "参数数量" 13 $paramBlock.Parameters.Count
 }
 
 # ============================================================

@@ -1,4 +1,4 @@
-﻿#Requires -RunAsAdministrator
+﻿﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
     下载 Shutdown Notice 构建产物并安装 Windows 计划任务。
@@ -19,10 +19,24 @@
     卸载模式：移除所有计划任务，可选删除安装目录。
 .PARAMETER RemoveFiles
     与 -Uninstall 配合使用，同时删除安装目录下的所有文件。
+.PARAMETER SendKey
+    Server酱 SendKey（可选）。安装时直接写入 config.ini，无需手动编辑。
+.PARAMETER AccessToken
+    钉钉机器人 access_token（可选）。安装时直接写入 config.ini。
+.PARAMETER Secret
+    钉钉机器人加签密钥（可选）。安装时直接写入 config.ini。
+.PARAMETER NotifyMode
+    通知策略: primary_only / failover / both_sequential（可选，默认 failover）。
+.PARAMETER NotifyPrimary
+    主通道: dingtalk / serverchan（可选，默认 dingtalk）。
+.PARAMETER AckMode
+    确认模式: response_header / send_completed（可选，默认 response_header）。
 .EXAMPLE
     .\install.ps1
 .EXAMPLE
     .\install.ps1 -InstallPath "D:\Tools\Shutdown Notice" -Tag "v1.0.0"
+.EXAMPLE
+    .\install.ps1 -SendKey "SCT123" -AccessToken "abc" -Secret "sec"
 .EXAMPLE
     .\install.ps1 -Uninstall
 .EXAMPLE
@@ -37,6 +51,12 @@ param(
     [string]$Tag = "",
     [string]$Token = "",
     [string]$Mirror = "",
+    [string]$SendKey = "",
+    [string]$AccessToken = "",
+    [string]$Secret = "",
+    [string]$NotifyMode = "failover",
+    [string]$NotifyPrimary = "dingtalk",
+    [string]$AckMode = "response_header",
     [switch]$Uninstall,
     [switch]$RemoveFiles
 )
@@ -450,8 +470,37 @@ function Main {
     if ($Script:VerifiedExes) {
         Write-Host "  初始化配置文件..."
         $null = & $Script:VerifiedExes[0] 2>&1
-        if (Test-Path (Join-Path $InstallPath 'config.ini')) {
-            Write-OK "config.ini 已自动生成，请填写后生效"
+        $configPath = Join-Path $InstallPath 'config.ini'
+        if (Test-Path $configPath) {
+            Write-OK "config.ini 已自动生成"
+
+            # 写入用户通过命令行传递的配置（覆盖模板默认值）
+            $configLines = Get-Content $configPath -Encoding UTF8
+            $section = ""
+            for ($i = 0; $i -lt $configLines.Count; $i++) {
+                $line = $configLines[$i]
+                if ($line -match '^\s*\[(.+)\]\s*$') {
+                    $section = $Matches[1]
+                    continue
+                }
+                if ($line -match '^\s*([^#;=]+)\s*=\s*.*$') {
+                    $key = $Matches[1].Trim()
+                    $newVal = $null
+                    switch ("$section.$key") {
+                        'serverchan.sendkey'  { if ($SendKey)      { $newVal = $SendKey } }
+                        'dingtalk.access_token' { if ($AccessToken) { $newVal = $AccessToken } }
+                        'dingtalk.secret'      { if ($Secret)      { $newVal = $Secret } }
+                        'notify.mode'          { if ($NotifyMode -ne 'failover')   { $newVal = $NotifyMode } }
+                        'notify.primary'       { if ($NotifyPrimary -ne 'dingtalk') { $newVal = $NotifyPrimary } }
+                        'http.ack_mode'        { if ($AckMode -ne 'response_header') { $newVal = $AckMode } }
+                    }
+                    if ($newVal) {
+                        $configLines[$i] = "$key = $newVal"
+                        Write-OK "  已配置 [$section] $key = $newVal"
+                    }
+                }
+            }
+            Set-Content $configPath -Value $configLines -Encoding UTF8
         } else {
             Write-Warn "config.ini 未生成，请检查 exe 是否运行正常"
         }
@@ -464,9 +513,14 @@ function Main {
     Write-Host "  安装完成！" -ForegroundColor Green
     Write-Host "----------------------------------------" -ForegroundColor Magenta
     Write-Host ""
-    Write-Host "  后续步骤:" -ForegroundColor Yellow
-    Write-Host "  1. 编辑 $InstallPath\config.ini 填写通知渠道配置" -ForegroundColor White
-    Write-Host "  2. 打开 任务计划程序 确认任务已注册" -ForegroundColor White
+    if (-not $SendKey -and -not $AccessToken) {
+        Write-Host "  后续步骤:" -ForegroundColor Yellow
+        Write-Host "  1. 编辑 $InstallPath\config.ini 填写通知渠道配置" -ForegroundColor White
+        Write-Host "  2. 打开 任务计划程序 确认任务已注册" -ForegroundColor White
+    } else {
+        Write-Host "  config.ini 已预配置，开箱即用" -ForegroundColor Green
+        Write-Host "  打开 任务计划程序 确认 5 个事件任务已注册" -ForegroundColor White
+    }
     Write-Host ""
 }
 
