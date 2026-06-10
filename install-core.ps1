@@ -462,9 +462,9 @@ function Invoke-GpoDeploy {
         }
     }
 
-    $args = @('-InstallPath', $InstallPath)
-    if ($Uninstall) { $args += '-Uninstall' }
-    & $gpoScript @args
+    $gpoArgs = @('-InstallPath', $InstallPath)
+    if ($Uninstall) { $gpoArgs += '-Uninstall' }
+    & $gpoScript @gpoArgs
 }
 
 
