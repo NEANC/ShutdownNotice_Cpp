@@ -62,6 +62,11 @@ param(
 )
 
 
+# 控制台编码: 避免 exe 中文输出在 PS 5.1 下显示为乱码
+if ($PSVersionTable.PSVersion.Major -le 5) {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+}
+
 # 硬编码参数
 $Script:TaskFolder = "Shutdown Notice"
 $Script:MaxRetries = 3
@@ -466,13 +471,65 @@ function Main {
     # 下载构建产物
     Invoke-Download
 
-    # 启动一次已验证的 exe 触发程序自动创建 config.ini
+    # 初始化配置文件：若已存在则校验完整性，不完整则重建
     if ($Script:VerifiedExes) {
         Write-Host "  初始化配置文件..."
-        $null = & $Script:VerifiedExes[0] 2>&1
         $configPath = Join-Path $InstallPath 'config.ini'
+
+        # 必需的节及其键（用于校验已有文件是否完整）
+        $requiredConfig = @{
+            'serverchan' = @('sendkey')
+            'dingtalk'   = @('access_token', 'secret')
+            'notify'     = @('mode', 'primary')
+            'http'       = @('ack_mode')
+        }
+
+        $needRegenerate = $true
         if (Test-Path $configPath) {
-            Write-OK "config.ini 已自动生成"
+            $existingLines = Get-Content $configPath -Encoding UTF8
+            $existingSections = @{}
+            $currentSec = ''
+            foreach ($line in $existingLines) {
+                if ($line -match '^\s*\[(.+)\]\s*$') {
+                    $currentSec = $Matches[1]
+                    $existingSections[$currentSec] = @()
+                } elseif ($line -match '^\s*([^#;=]+)\s*=' -and $currentSec) {
+                    $existingSections[$currentSec] += $Matches[1].Trim()
+                }
+            }
+
+            # 逐节比对
+            $missing = @()
+            foreach ($sec in $requiredConfig.Keys) {
+                if (-not $existingSections.ContainsKey($sec)) {
+                    $missing += "[$sec] (节缺失)"
+                    continue
+                }
+                foreach ($key in $requiredConfig[$sec]) {
+                    if ($key -notin $existingSections[$sec]) {
+                        $missing += "[$sec] $key (键缺失)"
+                    }
+                }
+            }
+
+            if ($missing.Count -eq 0) {
+                Write-OK "config.ini 已存在且结构完整，跳过生成"
+                $needRegenerate = $false
+            } else {
+                Write-Warn "config.ini 不完整，将重建"
+                foreach ($m in $missing) { Write-Host "    缺少: $m" -ForegroundColor Gray }
+                Remove-Item $configPath -Force
+            }
+        }
+
+        if ($needRegenerate) {
+            $null = & $Script:VerifiedExes[0] 1>$null 2>$null
+        }
+
+        if (Test-Path $configPath) {
+            if ($needRegenerate) {
+                Write-OK "config.ini 已自动生成"
+            }
 
             # 写入用户通过命令行传递的配置（覆盖模板默认值）
             $configLines = Get-Content $configPath -Encoding UTF8
@@ -518,8 +575,8 @@ function Main {
         Write-Host "  1. 编辑 $InstallPath\config.ini 填写通知渠道配置" -ForegroundColor White
         Write-Host "  2. 打开 任务计划程序 确认任务已注册" -ForegroundColor White
     } else {
-        Write-Host "  config.ini 已预配置，开箱即用" -ForegroundColor Green
-        Write-Host "  打开 任务计划程序 确认 5 个事件任务已注册" -ForegroundColor White
+        Write-Host "  config.ini 已完成预配置" -ForegroundColor Green
+        Write-Host "  请打开 任务计划程序 确认任务已注册" -ForegroundColor White
     }
     Write-Host ""
 }
