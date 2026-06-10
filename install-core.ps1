@@ -354,10 +354,14 @@ function Register-AllTasks {
                       -ExePath $exePath
     }
 
-    # down.exe — 关机脚本，无事件触发器，仅提示
-    $downExe = Join-Path $InstallPath "down.exe"
-    if (Test-Path $downExe) {
-        Write-Warn "down.exe 需通过组策略配置为关机脚本，详见 README.md"
+    # poweroff.exe / poweron.exe — 开关机脚本，无事件触发器，仅提示
+    $poweroffExe = Join-Path $InstallPath "poweroff.exe"
+    if (Test-Path $poweroffExe) {
+        Write-Warn "poweroff.exe 需通过组策略配置为关机脚本，详见 README.md"
+    }
+    $poweronExe = Join-Path $InstallPath "poweron.exe"
+    if (Test-Path $poweronExe) {
+        Write-Warn "poweron.exe 需通过组策略配置为开机脚本，详见 README.md"
     }
 }
 

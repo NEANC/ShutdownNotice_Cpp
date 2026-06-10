@@ -83,22 +83,28 @@ foreach(EVENT_ID IN LISTS EVENT_IDS)
 endforeach()
 
 # ============================================================
-# 关机通知程序 (down)
+# 开关机通知程序 (poweroff / poweron)
 # ============================================================
-add_executable(down src/down.cpp)
-target_link_libraries(down PRIVATE common)
-target_compile_definitions(down PRIVATE ${COMMON_DEFS})
+add_executable(poweroff src/poweroff.cpp)
+target_link_libraries(poweroff PRIVATE common)
+target_compile_definitions(poweroff PRIVATE ${COMMON_DEFS})
+
+add_executable(poweron src/poweron.cpp)
+target_link_libraries(poweron PRIVATE common)
+target_compile_definitions(poweron PRIVATE ${COMMON_DEFS})
 
 if(MSVC)
-    target_compile_options(down PRIVATE
-        $<$<CONFIG:Release>:/O2>
-        $<$<CONFIG:Release>:/GL>
-    )
-    target_link_options(down PRIVATE
-        $<$<CONFIG:Release>:/LTCG>
-        $<$<CONFIG:Release>:/OPT:REF>
-        $<$<CONFIG:Release>:/OPT:ICF>
-    )
+    foreach(exe IN ITEMS poweroff poweron)
+        target_compile_options(${exe} PRIVATE
+            $<$<CONFIG:Release>:/O2>
+            $<$<CONFIG:Release>:/GL>
+        )
+        target_link_options(${exe} PRIVATE
+            $<$<CONFIG:Release>:/LTCG>
+            $<$<CONFIG:Release>:/OPT:REF>
+            $<$<CONFIG:Release>:/OPT:ICF>
+        )
+    endforeach()
 endif()
 
 # ============================================================
@@ -111,12 +117,16 @@ foreach(EVENT_ID IN LISTS EVENT_IDS)
     target_compile_definitions(ID${EVENT_ID}_dbg PRIVATE ${COMMON_DEFS} SN_DEBUG_TIMING)
 endforeach()
 
-add_executable(down_dbg src/down.cpp)
-target_link_libraries(down_dbg PRIVATE common_dbg)
-target_compile_definitions(down_dbg PRIVATE ${COMMON_DEFS} SN_DEBUG_TIMING)
+add_executable(poweroff_dbg src/poweroff.cpp)
+target_link_libraries(poweroff_dbg PRIVATE common_dbg)
+target_compile_definitions(poweroff_dbg PRIVATE ${COMMON_DEFS} SN_DEBUG_TIMING)
+
+add_executable(poweron_dbg src/poweron.cpp)
+target_link_libraries(poweron_dbg PRIVATE common_dbg)
+target_compile_definitions(poweron_dbg PRIVATE ${COMMON_DEFS} SN_DEBUG_TIMING)
 
 # ============================================================
 # 安装规则 (仅正式版本)
 # ============================================================
-install(TARGETS down ID41 ID1074 ID6005 ID6006 ID6008
+install(TARGETS poweroff poweron ID41 ID1074 ID6005 ID6006 ID6008
         RUNTIME DESTINATION bin)

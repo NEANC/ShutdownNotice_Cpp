@@ -6,8 +6,8 @@
 #include <ctime>
 
 /**
- * down: 关机通知
- * 获取当前计算机名和时间，通过已配置的通知渠道推送关机告知
+ * poweron: 开机通知
+ * 获取当前计算机名和时间，通过已配置的通知渠道推送开机告知
  */
 int main() {
 #ifdef SN_DEBUG_TIMING
@@ -34,9 +34,9 @@ int main() {
         desp += wide_to_utf8(std::wstring_view(computer_name));
         desp += "** 于 **";
         desp += wide_to_utf8(std::wstring_view(time_buf));
-        desp += "** 时进入关机程序";
+        desp += "** 时完成启动";
 
-        send_notify("计算机正在关机", desp);
+        send_notify("系统启动完成", desp);
 #ifdef SN_DEBUG_TIMING
         debug_wait_if_enabled();
 #endif
