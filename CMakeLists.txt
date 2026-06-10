@@ -20,6 +20,9 @@ if(MSVC)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
 endif()
 
+# Release 构建静默: 定义 NDEBUG 禁用所有控制台输出
+add_compile_definitions($<$<CONFIG:Release>:NDEBUG>)
+
 # ============================================================
 # 共享静态库：事件日志查询 + 通知服务
 # ============================================================

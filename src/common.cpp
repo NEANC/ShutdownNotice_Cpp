@@ -22,6 +22,19 @@
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "crypt32.lib")
 
+// SDK 兼容: WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 需要 Win8 SDK+
+#ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2
+#define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
+#endif
+
+// Release 构建: 不执行控制台输出，不执行计时统计
+// dbg 诊断版本定义 SN_DEBUG_TIMING，保留输出和耗时记录
+#if !defined(NDEBUG) || defined(SN_DEBUG_TIMING)
+#define DEBUG_FPRINTF std::fprintf
+#else
+#define DEBUG_FPRINTF(...) ((void)0)
+#endif
+
 
 // 硬编码参数
 static constexpr const wchar_t* EVENT_CHANNEL = L"System";            ///< 事件日志通道
@@ -65,12 +78,15 @@ private:
 
 /** 初始化调试控制台为 UTF-8 编码，确保 printf 中文正常显示 */
 void init_debug_console_utf8() {
+#ifdef SN_DEBUG_TIMING
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+#endif
 }
 
 /** 诊断版本等待用户按键。使用 WriteConsoleW 避免中文乱码 */
 void debug_wait_if_enabled() {
+#ifdef SN_DEBUG_TIMING
     // 首次调用时设置控制台 UTF-8 代码页，确保 printf 中文正常显示
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
@@ -80,6 +96,7 @@ void debug_wait_if_enabled() {
     WriteConsoleW(GetStdHandle(STD_ERROR_HANDLE), msg,
                   static_cast<DWORD>(wcslen(msg)), &written, nullptr);
     std::getchar();
+#endif
 }
 
 
@@ -164,11 +181,9 @@ static void load_config() {
         if (out.is_open()) {
             out << CONFIG_TEMPLATE;
             out.close();
-            std::fprintf(stderr,
-                "[配置] 已生成模板配置文件 config.ini，请填写后重新运行\n");
+            DEBUG_FPRINTF(stderr, "[配置] 已生成模板配置文件 config.ini，请填写后重新运行\n");
         } else {
-            std::fprintf(stderr,
-                "[错误] 无法创建配置文件 config.ini\n");
+            DEBUG_FPRINTF(stderr, "[错误] 无法创建配置文件 config.ini\n");
         }
         std::exit(1);
     }
@@ -379,6 +394,11 @@ static bool http_post_json(const std::wstring& host, WORD port,
                        HTTP_SEND_TIMEOUT_MS,
                        HTTP_RECEIVE_TIMEOUT_MS);
 
+    // 强制 TLS 1.2: oapi.dingtalk.com 要求 TLS 1.2+
+    DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+    WinHttpSetOption(hRequest, WINHTTP_OPTION_SECURE_PROTOCOLS,
+                     &protocols, sizeof(protocols));
+
     const wchar_t* headers = L"Content-Type: application/json; charset=utf-8\r\n";
     DWORD header_len = static_cast<DWORD>(wcslen(headers));
 
@@ -393,7 +413,7 @@ static bool http_post_json(const std::wstring& host, WORD port,
     }
 
     if (!ok) {
-        std::fprintf(stderr, "[错误] HTTP 请求失败: %lu\n", GetLastError());
+        DEBUG_FPRINTF(stderr, "[错误] HTTP 请求失败: %lu\n", GetLastError());
         WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
@@ -429,12 +449,12 @@ static bool http_post_json(const std::wstring& host, WORD port,
     WinHttpCloseHandle(hSession);
 
     if (!ok) {
-        std::fprintf(stderr, "[错误] 未收到服务器响应\n");
+        DEBUG_FPRINTF(stderr, "[错误] 未收到服务器响应\n");
         return false;
     }
 
     if (status_code < 200 || status_code >= 300) {
-        std::fprintf(stderr, "[错误] 服务器返回 HTTP %lu\n", status_code);
+        DEBUG_FPRINTF(stderr, "[错误] 服务器返回 HTTP %lu\n", status_code);
         return false;
     }
 
@@ -483,7 +503,7 @@ static bool query_event_core(const wchar_t* xpath, DWORD flags,
         nullptr, EVENT_CHANNEL, xpath,
         EvtQueryChannelPath | flags);
     if (!hResults) {
-        std::fprintf(stderr, "[错误] EvtQuery 失败: GLE=%lu\n", GetLastError());
+        DEBUG_FPRINTF(stderr, "[错误] EvtQuery 失败: GLE=%lu\n", GetLastError());
         return false;
     }
 
@@ -496,7 +516,7 @@ static bool query_event_core(const wchar_t* xpath, DWORD flags,
     if (!ok) {
         if (evtNextErr == ERROR_NO_MORE_ITEMS || evtNextErr == ERROR_TIMEOUT)
             return false;
-        std::fprintf(stderr, "[错误] EvtNext 失败: GLE=%lu\n", evtNextErr);
+        DEBUG_FPRINTF(stderr, "[错误] EvtNext 失败: GLE=%lu\n", evtNextErr);
         return false;
     }
     if (dwReturned == 0) return false;
@@ -504,7 +524,7 @@ static bool query_event_core(const wchar_t* xpath, DWORD flags,
     const wchar_t* properties[] = {EVT_PROP_TIME, EVT_PROP_COMPUTER, EVT_PROP_PROVIDER};
     EVT_HANDLE hContext = EvtCreateRenderContext(3, properties, EvtRenderContextValues);
     if (!hContext) {
-        std::fprintf(stderr, "[错误] EvtCreateRenderContext 失败: GLE=%lu\n", GetLastError());
+        DEBUG_FPRINTF(stderr, "[错误] EvtCreateRenderContext 失败: GLE=%lu\n", GetLastError());
         EvtClose(hEvent);
         return false;
     }
@@ -514,7 +534,7 @@ static bool query_event_core(const wchar_t* xpath, DWORD flags,
     BOOL render_ok = EvtRender(hContext, hEvent, EvtRenderEventValues,
                                0, nullptr, &render_size, &props);
     if (!render_ok && GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-        std::fprintf(stderr, "[错误] EvtRender 获取缓冲区失败: GLE=%lu\n", GetLastError());
+        DEBUG_FPRINTF(stderr, "[错误] EvtRender 获取缓冲区失败: GLE=%lu\n", GetLastError());
         EvtClose(hContext);
         EvtClose(hEvent);
         return false;
@@ -525,7 +545,7 @@ static bool query_event_core(const wchar_t* xpath, DWORD flags,
                           render_size, render_buffer.data(), &render_size, &props);
     EvtClose(hContext);
     if (!render_ok || props < 3) {
-        std::fprintf(stderr, "[错误] EvtRender 失败: GLE=%lu\n", GetLastError());
+        DEBUG_FPRINTF(stderr, "[错误] EvtRender 失败: GLE=%lu\n", GetLastError());
         EvtClose(hEvent);
         return false;
     }
@@ -633,7 +653,7 @@ bool send_serverchan_notify(const std::string& title,
                             const std::string& desp) {
     const auto& sendkey = get_sendkey();
     if (sendkey.empty()) {
-        std::fprintf(stderr, "[ServerChan] 未配置 sendkey, 跳过\n");
+        DEBUG_FPRINTF(stderr, "[ServerChan] 未配置 sendkey, 跳过\n");
         return false;
     }
 
@@ -658,7 +678,7 @@ bool send_dingtalk_notify(const std::string& title,
     load_config();
     const auto& access_token = g_config.dingtalk_access_token;
     if (access_token.empty()) {
-        std::fprintf(stderr, "[钉钉] 未配置 access_token, 跳过\n");
+        DEBUG_FPRINTF(stderr, "[钉钉] 未配置 access_token, 跳过\n");
         return false;
     }
 
@@ -754,7 +774,7 @@ void send_notify(const std::string& title, const std::string& desp) {
     if (has_dingtalk)   dingtalk_ok   = send_dingtalk_notify(title, desp);
 
     if (!serverchan_ok && !dingtalk_ok) {
-        std::fprintf(stderr, "[通知] 所有渠道推送均失败\n");
+        DEBUG_FPRINTF(stderr, "[通知] 所有渠道推送均失败\n");
     }
 }
 
@@ -860,24 +880,21 @@ int process_event_notify(unsigned long event_id,
                 // 1074 + EventRecordID: 精确查询触发任务的那条事件
                 if (!query_event_by_record_id(args->record_id,
                                               event_id, info)) {
-                    std::fprintf(stderr,
-                        "[错误] 未找到 EventRecordID=%llu 的 EventID=%lu 记录\n",
+                    DEBUG_FPRINTF(stderr, "[错误] 未找到 EventRecordID=%llu 的 EventID=%lu 记录\n",
                         args->record_id, event_id);
                     return 1;
                 }
             } else {
                 // 1074 无 record_id: 回退到查询最新
                 if (!query_latest_event(event_id, info)) {
-                    std::fprintf(stderr,
-                        "[错误] 未在系统日志中找到 EventID=%lu 的记录\n", event_id);
+                    DEBUG_FPRINTF(stderr, "[错误] 未在系统日志中找到 EventID=%lu 的记录\n", event_id);
                     return 1;
                 }
             }
         } else {
             // fallback: 查日志
             if (!query_latest_event(event_id, info)) {
-                std::fprintf(stderr,
-                    "[错误] 未在系统日志中找到 EventID=%lu 的记录\n", event_id);
+                DEBUG_FPRINTF(stderr, "[错误] 未在系统日志中找到 EventID=%lu 的记录\n", event_id);
                 return 1;
             }
         }
