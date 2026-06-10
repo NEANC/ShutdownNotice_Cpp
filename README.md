@@ -103,6 +103,23 @@ $SN_SENDKEY='SCT123456'; $SN_ACCESS_TOKEN='abc123def'; $SN_SECRET='SEC...'; irm 
 | `$SN_NOTIFY_PRIMARY` | `[notify] primary`        | dingtalk / serverchan                     |
 | `$SN_ACK_MODE`       | `[http] ack_mode`         | response_header / send_completed          |
 
+### GPO 开关机脚本（高危操作）
+
+通过注册表向组策略注册 `poweroff.exe` / `poweron.exe` 为关机/启动脚本。运行时需输入 `YES` 二次确认。
+
+```powershell
+$SN_GPO_SCRIPTS=$true; irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
+```
+
+卸载时也需要显式传递此参数才会清理：
+
+```powershell
+$SN_UNINSTALL=$true; $SN_GPO_SCRIPTS=$true; irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
+```
+
+> 此操作直接写入 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\Scripts`，
+> 不会覆盖已存在的其他 GPO 脚本条目。卸载时精确比对 Script 路径后才移除。
+
 ### 卸载
 
 ```powershell

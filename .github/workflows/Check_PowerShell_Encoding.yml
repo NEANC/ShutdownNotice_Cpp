@@ -6,11 +6,13 @@ on:
     paths:
       - 'install-core.ps1'
       - 'install.ps1'
+      - 'gpo-scripts.ps1'
   pull_request:
     branches: [master]
     paths:
       - 'install-core.ps1'
       - 'install.ps1'
+      - 'gpo-scripts.ps1'
   workflow_dispatch:
 
 permissions:
@@ -34,7 +36,8 @@ jobs:
           script: |
             const targetFiles = [
               'install-core.ps1',
-              'install.ps1'
+              'install.ps1',
+              'gpo-scripts.ps1'
             ];
 
             let filesToCheck = targetFiles;
@@ -87,6 +90,7 @@ jobs:
           BOM_REQUIRED = {
               'install-core.ps1': True,
               'install.ps1': False,
+              'gpo-scripts.ps1': True,
           }
 
           files = json.loads(os.environ.get('TARGET_FILES_JSON', '[]'))
@@ -176,6 +180,7 @@ jobs:
           BOM_REQUIRED = {
               'install-core.ps1': True,
               'install.ps1': False,
+              'gpo-scripts.ps1': True,
           }
 
           files = json.loads(os.environ.get('FAILED_FILES_JSON', '[]'))
@@ -242,7 +247,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add install-core.ps1 install.ps1
+          git add install-core.ps1 install.ps1 gpo-scripts.ps1
           git commit -m "auto fix: normalize .ps1 files encoding and line endings"
 
           # 拉取最新避免冲突
@@ -265,6 +270,7 @@ jobs:
           RULES = {
               'install-core.ps1': 'UTF-8 with BOM + CRLF',
               'install.ps1':      'UTF-8 without BOM + CRLF',
+              'gpo-scripts.ps1':  'UTF-8 with BOM + CRLF',
           }
 
           failed = json.loads(os.environ.get('FAILED_FILES_JSON', '[]'))
@@ -303,7 +309,8 @@ jobs:
 
             const rules = {
               'install-core.ps1': 'UTF-8 with BOM + CRLF',
-              'install.ps1':      'UTF-8 without BOM + CRLF'
+              'install.ps1':      'UTF-8 without BOM + CRLF',
+              'gpo-scripts.ps1':  'UTF-8 with BOM + CRLF'
             };
 
             const affectedFileList = failedFiles
@@ -325,6 +332,7 @@ jobs:
               '',
               '- `install-core.ps1`: UTF-8 with BOM + CRLF',
               '- `install.ps1`:      UTF-8 without BOM + CRLF',
+              '- `gpo-scripts.ps1`:  UTF-8 with BOM + CRLF',
               '',
               '**Fix command / 修复命令:**',
               '',

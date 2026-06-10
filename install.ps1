@@ -1,6 +1,7 @@
 # Shutdown Notice IEX bootstrap - irm https://raw.githubusercontent.com/NEANC/ShutdownNotice_Cpp/master/install.ps1 | iex
 # 国内加速: $SN_MIRROR='ghfast.top'; irm https://ghfast.top/.../install.ps1 | iex
 # 预配置: $SN_SENDKEY='SCT...'; $SN_ACCESS_TOKEN='abc'; irm ... | iex
+# GPO 部署: $SN_GPO_SCRIPTS=$true; irm ... | iex
 
 $ErrorActionPreference = 'Stop'
 
@@ -144,6 +145,9 @@ $notifyPrimary = Get-SNValue -Name 'SN_NOTIFY_PRIMARY' -DefaultValue $null
 if ($notifyPrimary) { $params['NotifyPrimary']    = $notifyPrimary }
 $ackMode = Get-SNValue -Name 'SN_ACK_MODE' -DefaultValue $null
 if ($ackMode)       { $params['AckMode']         = $ackMode }
+
+# GPO scripts deployment (high-risk, explicit opt-in)
+if (Test-SNTrue -Name 'SN_GPO_SCRIPTS') { $params['DeployGpoScripts'] = $true }
 
 if (Test-SNTrue -Name 'SN_UNINSTALL')    { $params['Uninstall']    = $true }
 if (Test-SNTrue -Name 'SN_REMOVE_FILES') { $params['RemoveFiles']  = $true }

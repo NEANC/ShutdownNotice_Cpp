@@ -9,6 +9,7 @@ on:
     paths:
       - 'install.ps1'
       - 'tests/test-install.ps1'
+      - 'gpo-scripts.ps1'
       - '.github/workflows/Sandbox-test.yml'
   workflow_dispatch:
 

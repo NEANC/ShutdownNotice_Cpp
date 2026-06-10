@@ -117,9 +117,29 @@ if ($parseErrors.Count -eq 0) {
 }
 Assert-True "install-core.ps1 AST 解析成功" ($ast2 -ne $null)
 $funcNames2 = $ast2.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | ForEach-Object { $_.Name }
-$requiredFuncs = @("Main", "Invoke-Download", "New-EventTask", "Register-AllTasks", "Get-LatestRelease", "Uninstall-ShutdownNotice")
+$requiredFuncs = @("Main", "Invoke-Download", "New-EventTask", "Register-AllTasks", "Get-LatestRelease", "Uninstall-ShutdownNotice", "Invoke-GpoDeploy")
 foreach ($f in $requiredFuncs) {
     Assert-True "函数 $f 已定义" ($funcNames2 -contains $f)
+}
+
+# 1c. gpo-scripts.ps1 语法验证
+Write-Host ""
+Write-Host "--- gpo-scripts.ps1 ---"
+$gpoPath = Join-Path $RepoRoot "gpo-scripts.ps1"
+$gpoContent = Get-Content -Path $gpoPath -Raw -Encoding UTF8
+if ($gpoContent[0] -eq [char]0xFEFF) { $gpoContent = $gpoContent.Substring(1) }
+$gpoTokens = $null
+$gpoErrors = $null
+$gpoAst = [System.Management.Automation.Language.Parser]::ParseInput($gpoContent, [ref]$gpoTokens, [ref]$gpoErrors)
+if ($gpoErrors.Count -eq 0) {
+    Assert-True "gpo-scripts.ps1 语法有效" $true
+} else {
+    Assert-True "gpo-scripts.ps1 语法有效" $false
+    foreach ($e in $gpoErrors) { Write-Host "        解析错误: $($e.Message)" -ForegroundColor Red }
+}
+$gpoFuncs = $gpoAst.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | ForEach-Object { $_.Name }
+foreach ($f in @("Confirm-HighRisk", "Ensure-GpoContainer", "Set-GpoScriptChild", "Get-GpoScriptEntries", "Register-GpoScripts", "Unregister-GpoScripts")) {
+    Assert-True "gpo-scripts.ps1 含 $f" ($gpoFuncs -contains $f)
 }
 
 # ============================================================
@@ -374,9 +394,10 @@ if ($paramBlock) {
     Assert-True "包含 NotifyMode 参数" ($paramNames -contains "NotifyMode")
     Assert-True "包含 NotifyPrimary 参数" ($paramNames -contains "NotifyPrimary")
     Assert-True "包含 AckMode 参数" ($paramNames -contains "AckMode")
+    Assert-True "包含 DeployGpoScripts 参数" ($paramNames -contains "DeployGpoScripts")
     Assert-True "包含 Uninstall 参数" ($paramNames -contains "Uninstall")
     Assert-True "包含 RemoveFiles 参数" ($paramNames -contains "RemoveFiles")
-    Assert-Equal "参数数量" 13 $paramBlock.Parameters.Count
+    Assert-Equal "参数数量" 14 $paramBlock.Parameters.Count
 }
 
 # ============================================================

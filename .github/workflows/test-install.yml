@@ -70,6 +70,20 @@ jobs:
         run: |
           & "$env:GITHUB_WORKSPACE\tests\verify-install.ps1"
 
+      # verify gpo-scripts.ps1 syntax (part of install flow)
+      - name: verify gpo-scripts.ps1 syntax
+        run: |
+          $path = "$env:GITHUB_WORKSPACE\gpo-scripts.ps1"
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -eq 0) {
+              Write-Host "[OK] gpo-scripts.ps1 syntax valid" -ForegroundColor Green
+          } else {
+              foreach ($e in $errors) { Write-Host "[FAIL] $($e.Message)" -ForegroundColor Red }
+              throw "gpo-scripts.ps1 syntax check failed"
+          }
+
       # ----------------------------------------------------------
       # 4. 卸载清理
       # ----------------------------------------------------------

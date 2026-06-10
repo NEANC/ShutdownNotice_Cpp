@@ -31,6 +31,9 @@
     主通道: dingtalk / serverchan（可选，默认 dingtalk）。
 .PARAMETER AckMode
     确认模式: response_header / send_completed（可选，默认 response_header）。
+.PARAMETER DeployGpoScripts
+    额外部署 GPO 开关机脚本（高危操作，需二次确认）。将 poweroff.exe / poweron.exe
+    注册到组策略的关机/启动脚本中，通过注册表直接写入。卸载时同样需传递此参数才会清理。
 .EXAMPLE
     .\install.ps1
 .EXAMPLE
@@ -38,9 +41,13 @@
 .EXAMPLE
     .\install.ps1 -SendKey "SCT123" -AccessToken "abc" -Secret "sec"
 .EXAMPLE
+    .\install.ps1 -DeployGpoScripts
+.EXAMPLE
     .\install.ps1 -Uninstall
 .EXAMPLE
     .\install.ps1 -Uninstall -RemoveFiles
+.EXAMPLE
+    .\install.ps1 -Uninstall -DeployGpoScripts
 .NOTES
     必须以管理员身份运行。
 #>
@@ -57,6 +64,7 @@ param(
     [string]$NotifyMode = "failover",
     [string]$NotifyPrimary = "dingtalk",
     [string]$AckMode = "response_header",
+    [switch]$DeployGpoScripts,
     [switch]$Uninstall,
     [switch]$RemoveFiles
 )
@@ -426,6 +434,39 @@ function Uninstall-ShutdownNotice {
     }
 }
 
+# GPO 脚本部署 (调用 gpo-scripts.ps1)
+function Invoke-GpoDeploy {
+    param([switch]$Uninstall)
+
+    $gpoScript = Join-Path $PSScriptRoot 'gpo-scripts.ps1'
+
+    # 本地找不到则从 GitHub 下载
+    if (-not (Test-Path $gpoScript)) {
+        Write-Host ''
+        Write-Host "  正在获取 GPO 部署脚本..." -ForegroundColor Cyan
+        $gpoUrl = "https://raw.githubusercontent.com/$Repo/$branch/gpo-scripts.ps1"
+        $gpoScript = Join-Path $env:TEMP 'gpo-scripts.ps1'
+        try {
+            $client = New-Object Net.WebClient
+            $bytes = $client.DownloadData($gpoUrl)
+            $code = [System.Text.Encoding]::UTF8.GetString($bytes) -replace "`r(?!`n)", "`r`n"
+            $code = $code -replace "(`r`n|`n|`r)", "`r`n"
+            $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+            [System.IO.File]::WriteAllText($gpoScript, $code, $utf8Bom)
+            Write-Host "  已下载: $gpoUrl" -ForegroundColor Gray
+        } catch {
+            Write-Host "  错误: 无法获取 GPO 部署脚本" -ForegroundColor Red
+            Write-Host "  URL: $gpoUrl" -ForegroundColor Gray
+            Write-Host "  请确保仓库中存在 gpo-scripts.ps1 文件" -ForegroundColor Yellow
+            return
+        }
+    }
+
+    $args = @('-InstallPath', $InstallPath)
+    if ($Uninstall) { $args += '-Uninstall' }
+    & $gpoScript @args
+}
+
 
 # 主流程
 function Main {
@@ -443,6 +484,10 @@ function Main {
         Write-Host ""
 
         Uninstall-ShutdownNotice
+
+        if ($DeployGpoScripts) {
+            Invoke-GpoDeploy -Uninstall
+        }
 
         Write-Host ""
         Write-Host "  卸载完成！" -ForegroundColor Green
@@ -508,6 +553,10 @@ function Main {
 
     # 注册任务
     Register-AllTasks
+
+    if ($DeployGpoScripts) {
+        Invoke-GpoDeploy
+    }
 
     Write-Host ""
     Write-Host "  安装完成！" -ForegroundColor Green
